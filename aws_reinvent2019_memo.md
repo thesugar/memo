@@ -41,7 +41,7 @@
 
 - Amazon Textract
     - OCRサービス
-    - pdf，画像のテキストと構造情報をr抽出するマネージドサービス
+    - pdf，画像のテキストと構造情報を抽出するマネージドサービス
     - テキスト，フォーム，テーブルの抽出が可能
     - 日本語には現在対応していない（英字のみ対応）
     - ユースケース
@@ -174,8 +174,8 @@
         - US4リージョン，東京など16リージョンで利用可能
 
 ## その他
-### Amazon Autora Machine Learning
+### Amazon Aurora Machine Learning
 - SQL言語を使用して，データベースに機械学習の予測機能を追加
-- Autoraデータベースから，Amazon SageMakerおよびAmazon Comrehendへ統合
-- Amazon SageMakerモデルトレーニングのためにAmazon AutoraからデータをS3にエクスポート
+- Auroraデータベースから，Amazon SageMakerおよびAmazon Comrehendへ統合
+- Amazon SageMakerモデルトレーニングのためにAmazon AuroraからデータをS3にエクスポート
 - たとえばAuroraでSQLクエリを記述することにより，製品推奨システムを構築できる．クエリは，顧客プロフィール，ショッピング履歴，および製品カタログデータをAmazon SageMakerモデルに渡す．次に，アプリケーションはクエリ結果として返される製品推奨を取得する．
