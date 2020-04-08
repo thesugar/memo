@@ -290,3 +290,266 @@ db.collection("cities").where("visibility", "==", "public").get()
 ```
 
 つまり、セキュリティルールをもってアプリ側の読み書きロジックを代用できるわけではない（「セキュリティルールをちゃんと書けばアプリ側は雑に全取得をかけるだけで所望のデータだけを取ってこれるでしょ」ということにはならない）。
+
+## [データを安全にクエリする](https://firebase.google.com/docs/firestore/security/rules-query?hl=ja)
+
+本章では、セキュリティルールと同じ制約をアプリ側のクエリで使用する方法を説明する。また、`limit` や `orderBy` などのクエリプロパティに基づいてクエリを許可または拒否するセキュリティルールを記述する方法も説明する。
+
+### ルールはフィルタではない
+セキュリティルールは、クエリが完全に動作するか、まったく動作しないかを決定する。クライアントが読み取り権限を持たないドキュメントをクエリが返す可能性がある場合、リクエスト全体が失敗する。
+
+### クエリとセキュリティルール
+#### auth.uid に基づくドキュメントの保護とクエリ
+以下のような `story` ドキュメントのコレクションを含むデータベースを考えてみよう。
+
+**/stories/{storyid}**
+```javascript
+{
+    title: "A Great Story",
+    content: "Once upon a time...",
+    author: "some_auth_id",
+    published: false
+}
+```
+各ドキュメントには `title` フィールドと `content` フィールドに加えて、アクセス制御に使用される `author` フィールドと `published` フィールドが格納されている。この例では、ドキュメントを作成したユーザーの uid を `author` フィールドに設定していると想定している。Firebase Authentication はセキュリティルールの `request.auth` 変数に値を設定する。  
+  
+次のルールでは、`request.auth` 変数と `resource.data` 変数を使用して、各 `story` に対する読み取りと書き込みのアクセス権を作成者のみに制限している。
+
+```
+service cloud.firestore {
+    match /databases/{database}/documents {
+        match /stories/{storyid} {
+            allow read, write: if request.auth.uid == resource.data.author;
+        }
+    }
+}
+```
+
+あるアプリに、ユーザーが作成した `story` ドキュメントのリストを表示するページを含めるとする。次のクエリを使用してこのページのデータを取得できそうに思えるが、セキュリティルールと同じ制約が含まれていないため、このクエリは失敗する。
+
+❌　失敗する
+```javascript
+db.collection("stories").get()
+```
+
+*現在のユーザーがすべての `story` ドキュメントの作成者であったとしてもこのクエリは失敗する。* なぜなら、Firestore がセキュリティルールを適用するときには、ドキュメントの実際のプロパティに対してではなく、結果セットの「可能性」に対してクエリを評価するためである。  
+  
+一方、`author` フィールドに関してセキュリティルールと同じ制約を含んでいる次のクエリは成功する。
+
+✅　有効
+```javascript
+const user = firebase.auth().currentUser;
+
+db.collection("stories").where("author", "==", user.uid).get()
+```
+
+### フィールドに基づいてドキュメントを保護し、クエリする
+次のセキュリティルールでは、`story` コレクションの読み取りアクセス対象を広げ、`published` フィールドが `true` に設定されている `story` ドキュメントをすべてのユーザーが読み取ることができるようにする。
+
+```
+service cloud.firestore {
+    match /databases/{database}/documents {
+        match /stories/{storyid} {
+            // published が true のドキュメントは誰でも読める。そうでないドキュメントはドキュメントの作成者のみが読める
+            allow read: if resource.data.published == true || request.auth.uid == resource.data.author;
+            allow write: if request.auth.uid == resource.data.author;
+        }
+    }
+}
+```
+
+公開ページのクエリには、セキュリティルールと同じ制約を含める必要がある。
+
+```javascript
+db.collection("stories").where("published", "==", true).get()
+```
+
+### in クエリと array-contains-any クエリ
+`in` または `array-contains-any` のクエリ句をルールセットに対して評価するとき、それぞれの比較値が個別に評価される。各比較値はセキュリティルールの制約を満たしている必要がある。たとえば、次のルールの場合：
+
+```
+match /mydocuments/{doc} {
+    allow read: if resource.data.x > 5;
+}
+```
+
+❌無効：可能性のあるすべてのドキュメントについて `x > 5` になることがクエリによって保証されない
+
+```javascript
+db.collection("mydocuments").where("x", "in", [1, 3, 6, 42, 99]).get()
+```
+
+✅有効：可能性のあるすべてのドキュメントについて `x > 5` になることがクエリによって保証される
+
+```javascript
+db.collection("mydocuments").where("x", "in", [6, 42, 99, 105, 200]).get()
+```
+
+### クエリの制約の評価
+セキュリティルールは、クエリの制約に基づいてそのクエリを許可または拒否することもできる。`request.query` 変数には、クエリの `limit`、`offset`、`orderBy` の各プロパティが含まれている。たとえば、取得されるドキュメントの最大数を特定の範囲に制限していないクエリをセキュリティルールで拒否できる。
+
+```
+// read ルールは get ルールと list ルールに分割でき、list ルールは、コレクションに対するクエリとリクエストに適用される。
+allow list: if request.query.limit <= 10;
+```
+
+### コレクショングループに基づくドキュメントの保護とクエリ
+セキュリティルールでは、コレクショングループのルールを記述して、コレクショングループのクエリを明示的に許可する必要がある。なお、コレクショングループクエリには、セキュリティルールバージョン 2 である必要がある。  
+  
+`match /{path=**}/[COLLECTION_ID]/{doc}` を使用してコレクショングループのルールを記述する。  
+たとえば、`posts` サブコレクションを含む `forum` ドキュメントに編成されたフォーラムを考えてみよう。
+
+**/forums/{forumid}/posts/{postid}**
+```js
+{
+    author: "some_auth_id",
+    authorname: "some_username",
+    content: "I just read a great story"
+}
+```
+
+このアプリケーションでは、投稿はオーナーが編集でき、認証済みのユーザーが読み取りできる。
+
+```
+service cloud.firestore {
+    match /databases/{database}/documents {
+        match /formus/{formuid}/posts/{post} {
+            allow read: if request.auth.uid != null;
+            allow write: if request.auth.uid == resource.data.author;
+        }
+    }
+}
+```
+
+認証済みのユーザーは、任意の単一のフォーラムの投稿を取得できる。
+
+```js
+db.collection("forums/technology/posts").get()
+```
+
+では、現在のユーザーが、すべてのフォーラムにわたる自分の投稿を見ることができるようにする場合はどうか。コレクショングループクエリを使用して、すべての `posts` コレクションから結果を取得できる。
+
+```js
+const user = firebase.auth().currentUser;
+
+db.collectionGroup("posts").where("author", "==", user.uid)
+```
+（注）このクエリには、`posts` コレクションの、フィールド `author` に対するインデックスが必要。このインデックスを有効にしていない場合エラーリンクが返るが、そのリンク先にアクセスしてインデックスを作成できるようなので、あまり気にする必要はないだろう。  
+  
+セキュリティルールでは、`posts` コレクショングループの読み取りまたは一覧のルールを記述して、このクエリを許可する必要がある。
+
+```
+rules_version = '2';
+service cloud.firestore {
+    match /database/{databases}/documents {
+        match /{path=**}/posts/{post} {
+            // 認証済みのユーザーは posts のコレクショングループをクエリできる
+            // これはコレクションクエリ、コレクショングループクエリ、単一のドキュメント取得に適用される
+            allow read: if request.auth.uid != null;
+        }
+        match /forums/{forumid}/posts/{postid} {
+            allow write: if request.auth.uid == resource.data.author;
+        }
+    }
+}
+```
+
+これらのルールは、階層に関係なく、ID `posts` を持つすべてのコレクションに適用される。たとえば、これらのルールは、次の `posts` コレクションすべてに適用される。
+- `/posts/{postid}`
+- `/forums/{forumid}/posts/{postid}`
+- `/forums/{forumid}/subforums/{subforumid}/posts/{postid}`
+
+### フィールドに基づく安全なコレクショングループクエリ
+単一コレクションのクエリと同様に、コレクショングループクエリも、セキュリティルールで設定されている制約を満たす必要がある。たとえば、上記の `stories` の例と同様、各フォーラム投稿に `published` フィールドを追加できる。
+
+**/forums/{forumid}/posts/{postid}**
+```js
+{
+    author: "some_auth_id",
+    authorname: "some_username",
+    content: "I just read a great story",
+    published: false
+}
+```
+
+これにより、 `published` ステータスと投稿の `author` に基づく、`posts` コレクショングループのルールを記述できる。
+
+```
+rules_version = '2';
+service cloud.firestore {
+    match /databases/{database}/documents {
+        
+        function authorOrPublished() {
+            return resource.data.published == true || request.auth.uid == resource.data.author;
+        }
+
+        match /{path=**}/posts/{postid} {
+            allow list: if authorOrPublished();
+            allow get: if authorOrPublished();
+        }
+
+        match /formus/{forumid}/posts/{postid} {
+            allow write: if request.auth.uid == resource.data.author;
+        }
+    }
+}
+```
+
+上記のルールにより、クライアントでは次のクエリを実行できる。
+
+- 1 つのフォーラムで公開された投稿を誰でも取得できる。
+    ```js
+    db.collection("forums/technology/posts").where('published', '==', true).get()
+    ```
+- すべてのフォーラムで、誰でも投稿者が公開した投稿を取得できる
+    ```js
+    db.collectionGroup("posts").where("author", "==", "some_auth_id").where('published', '==', true).get()
+    ```
+- 投稿者は、すべてのフォーラムで、公開済みおよび未公開の自分の投稿をすべて取得できる。
+    ```js
+    const user = firebase.auth().currentUser;
+    db.collectionGroup("posts").where("author", "==", user.uid).get()
+    ```
+
+### コレクショングループとドキュメントパスに基づいてドキュメントを保護し、クエリする
+場合によっては、ドキュメントパスに基づいてコレクショングループクエリを制限することもできる。こうした制限を作成するには、フィールドに基づいてドキュメントの保護とクエリを行う場合と同じ手法を使用する。  
+例として、いくつかの証券取引所と暗号通貨取引所の間で、書くユーザーの取引を追跡するアプリケーションを考えてみよう。
+
+**/users/{userid}/exchange/{exchangeid}/transactions/{transaction}**
+```js
+{
+    amount: 100,
+    exchange: 'some_exhange_name',
+    timestamp: April 1, 2019 at 12:00:00 PM UTC-7,
+    user: "some_auth_id"
+}
+```
+
+`transaction` ドキュメントをどのユーザーが所有しているかはドキュメントのパスから確認できる（パスの中に `{userid}` があるため）が、次の 2 つのことを行うために、各 `transaction` ドキュメントにこの情報を複製する。
+
+- ドキュメントパスに特定の `/user/{userid}` が含まれるドキュメントのみを対象とするコレクショングループクエリを記述する。
+
+    ```js
+    const user = firebase.auth().currentUser;
+    db.collectionGroup("transactions").where("user", "==", user).orderBy('timestamp').limit(5)
+    ```
+
+- `transactions` コレクショングループのすべてのクエリに対してこの制限を適用し、別のユーザーの `transaction` ドキュメントを取得できないようにする。
+
+この制限は、セキュリティルールに適用され、`user` フィールドのデータ検証を含む。
+
+```
+rules_version = '2';
+service cloud.firestore {
+    match /databases/{database}/documents {
+        match /{paths=**}/transactions/{transaction} {
+            allow read: if resource.data.user == request.auth.uid;
+        }
+
+        match /users/{userid}/exchange/{exchangeid}/transactions/{transaction} {
+            allow write: if userid = request.auth.uid 
+                            && request.data.user == request.auth.uid;
+        }
+    }
+}
+```
