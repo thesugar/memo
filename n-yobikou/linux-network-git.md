@@ -306,3 +306,54 @@ DNS とは、Domain Name System の頭文字を取ったもの。ホスト名を
 1. これで、tmux の 0 番ウインドウをクライアントにしてアクセスしてみる。Ctrl + b → 0 でウインドウ 0 番に切り替えてから、`curl http://localhost:8000/index.html` と入力すると、作った HTML ファイルの内容が返ってくる。
 
 Ubuntu を仮想マシンや Docker で立ち上げている場合でも、ポートフォワーディングをすることで、ローカル（Mac などのホスト OS）からアクセスすることができる。
+
+## 通信をする bot の開発
+### bot の動きを定義する
+以下のようなシェルスクリプトを書く。
+
+```sh
+#!/bin/bash
+dirname="/workspace/niconico-ranking-rss"
+mkdir -p $dirname
+filename="${dirname}/hourly-ranking-`date +'%Y%m%d%H%M'`.xml"
+echo "Save to $filename"
+curl -s -o $filename -H "User-Agent: CrawlBot; your@email" https://www.nicovideo.jp/ranking/genre/all?rss=2.0&lang=ja-jp
+```
+
+（説明）
+- 保存先ディレクトリを示す変数として `dirname` を使っている
+- さらに `mkdir` コマンドに `-p` オプションを与えることで、すでにディレクトリが存在する場合にも問題なく動作するようになっている
+- 変数が `${dirname}` のように `{}` で囲まれている部分は、他の文字との区切りを示すため。
+- バッククォートで囲んだ部分は、コマンドを実行した標準出力を文字列として取得して使う、という構文。ここでは、バッククォートの中に `date +'%Y%m%d%H%M'` と書かれている。date コマンドを実行して得られた結果を文字列として取り込むということで、結果としては `hourly-ranking-202004201430.xml` のようなファイル名が出来上がる。
+- `curl` コマンドは、*何も表示せず実行するための `-s` オプション* と、*結果を指定したファイルへ保存する `-o` オプション* を指定している。さらに、`-H` オプションに続けて User-Agent を指定することで、HTTP のリクエストに UA に関するヘッダを追加している。
+
+### bot を自動化する
+このシェルスクリプトを自動的に実行するために **cron** というプログラムを利用する。  
+cron とは、プログラムを決められたスケジュールにあわせて自動実行してくれるプロセスであり、週のいつ、月のいつ、何日何時何分に何を実行するのか設定することができる。  
+cron を設定するには、まず
+
+```bash
+crontab -e
+```
+
+と入力する。場合によっては、エディタの選択画面が開くので Vim などを選択。
+すると、`# Edit this file to introduce tasks to be run by cron` と第一行目に書かれたファイルの編集画面が出るので、その最終行に以下のように記述。
+
+```
+40 * * * * /home/workspace/bot/niconico-ranking.sh
+```
+
+これは、毎時 40 分に、指定のプログラム（`niconico-ranking.sh`）を実行せよ、という内容。これで保存すると、指定した時刻になれば自動的にスクリプトが実行される。
+
+うまくいかない場合は、ターミナルで `/etc/init.d/cron status` と打って cron が起動しているかを調べる。起動していない場合（cron is not running と表示される）、`/etc/init.d/cron start` と打つことで起動させることができる。
+
+## git・GitHub
+### タグを使う
+**タグ** とは、荷物などにつけるタグと同じで、特定のコミットの状態に別の名前をつけることを言う。`git tag タグ名` という形式でコマンドを実行することで、タグが作成される。
+
+```bash
+git tag 1.0
+git push --tags origin master
+```
+
+とすることで、タグをつけたバージョンが、zip などでダウンロードできるページが自動的に作られる。
