@@ -550,3 +550,253 @@ assert.equal([1], [1]) // 🛑 AssertionError
 assert.deepEqual([1], [1]); // ✅
 assert.deepEqual({p: 1}, {p: 1}); // ✅
 ```
+
+## ボットインタフェースとの連携
+Hubot + CoffeeScript で Slack bot を作るレッスンは省略。
+その中で出てきた一部を以下で学習。
+
+### 文字列操作
+#### 正規表現
+```js
+/todo (.+)/i
+```
+
+この表現は、todo で始まり、その後に 1 つスペースを置いてなんらかの文字列が記述されているという正規表現。最後の / の後の i は、大文字でも小文字でもマッチするというオプション。`.+` の部分は、`.` が改行文字以外のどの 1 文字にもマッチする文字であり、`+` は直前の文字の 1 回以上の繰り返しにマッチするという意味。任意の文字の繰り返しなので、`aaa` や `あいうえお` もマッチする。
+
+`(.+)` と、正規表現を `()` で囲んだものは、**グループ**といって正規表現のかたまりを表す表現。この `()` の中でマッチした内容を後でプログラムから取得することができる。→ `hoge.match[1]` とする。このとき、添字の 0 にはマッチした文字列全体が、添字の 1 には 1 番目の () でマッチした文字列が含まれる。
+
+上記の `/todo (.+)/i` は、実用においては「todo 鉛筆を買う」のような使われ方を想定している。
+
+詳細は [MDN の正規表現の資料](https://developer.mozilla.org/ja/docs/Web/JavaScript/Guide/Regular_Expressions)。
+
+#### 文字列のメソッド
+`trim` 関数は、文字列の関数。文字列の両端の空白を取り除いた文字列を取得する関数。
+
+`join` 関数は、配列のすべての要素を与えられた文字列でつないで 1 つの文字列にする関数。`\n` という改行を表すエスケープシーケンスで結合するなど。
+
+## 同期 I/O と非同期 I/O
+今回は、`fs` モジュールを使用してファイルへデータを保存することで情報の永続化を行う。そのためにまず、Node.js がファイルを読み込んだり、書き込んだり、または通信をしたりする際の仕組みについて知る必要がある。
+
+Node.js は他のプログラミング言語と少し違うところがある。それは**非同期 I/O** を使ったプログラミングがやりやすいという側面。
+
+### 非同期 I/O
+I/O とは入出力処理のこと。多くのプログラミング言語では I/O 処理の間、例えばディスクに書き込む待ち時間や通信の待ち時間は、プログラムは停止してその I/O 処理を待つ。このような I/O 処理のことを**同期 I/O** と呼ぶ。
+
+一方、**非同期 I/O** は同期 I/O　とは異なり、I/O の開始処理をしても、その終了は待たない。I/O の待ち時間中にも別の処理を実施し、コンピューターのリソースをうまく活用する。
+
+なお、この *I/O 処理の間プログラムが停止すること*を **ブロッキング** と呼ぶ。
+
+ブロッキングの間にも CPU を効率よく利用するために、マルチプロセスにしたり、より軽量なプロセスであるスレッドを使いマルチスレッドにして解決することもある。
+
+Node.js では、マルチプロセスやマルチスレッドではなく、*シングルスレッドでブロッキングしない非同期 I/O を利用* することで効率化を図っている。
+
+### 非同期 I/O による実装
+
+**app.js**
+```js
+'use strict';
+const fs = require('fs');
+const fileName = './test.txt';
+for (let count = 0; count < 500; count++) {
+  fs.appendFile(fileName, 'あ', 'utf8', () => {});
+  fs.appendFile(fileName, 'い', 'utf8', () => {});
+  fs.appendFile(fileName, 'う', 'utf8', () => {});
+  fs.appendFile(fileName, 'え', 'utf8', () => {});
+  fs.appendFile(fileName, 'お', 'utf8', () => {});
+  fs.appendFile(fileName, '\n', 'utf8', () => {});
+}
+```
+
+これは、500 回にわたり、`test.txt` というファイルに「あいうえお」と改行コードを書き込むということを行うコード。`appendFile` 関数は、ファイルに対して書き込みを行う関数で、ここでは utf8 の文字コードで書き込んでいる。`() => {}` の部分は、`appendFile` を行ったあとの処理をコールバック関数で指定している（非同期 I/O を利用する関数では、このコールバック関数を指定しないとエラーになる）が、今回は「何もしない」という意味の `() => {}` を渡している。
+
+これを実行して `test.txt` を確認すると次のような感じになる。
+
+```txt
+えお
+あいうえいお
+あいえうお
+あいうおえ
+あいあうえ
+おいうお
+あええうお
+あいうえお
+あいうえお
+あいうえお
+いあいうえあお
+いうえ
+```
+
+以上のように順番が乱れて表示される。*これが非同期 I/O である*。非同期 I/O は「I/O の処理がひとつ終わってから、次の I/O の処理を行う」ことを保証していない。そのため、このように順不同になる性質がある。その反面、CPU を効率よく利用することができる。
+
+では、これを直すためにはどうすればよいか？
+
+### 同期 I/O を使った実装
+Node.js では、デフォルトでは非同期 I/O の関数が呼ばれるが、Sync という修飾子がついた同期 I/O の関数も提供されている。
+
+**app.js**
+```js
+'use strict';
+const fs = require('fs');
+const fileName = './test.txt';
+for (let count = 0; count < 500; count++) {
+  fs.appendFileSync(fileName, 'あ', 'utf8');
+  fs.appendFileSync(fileName, 'い', 'utf8');
+  fs.appendFileSync(fileName, 'う', 'utf8');
+  fs.appendFileSync(fileName, 'え', 'utf8');
+  fs.appendFileSync(fileName, 'お', 'utf8');
+  fs.appendFileSync(fileName, '\n', 'utf8');
+}
+```
+
+すべての書き込み関数を `appendFileSync` に変更した。これで実行して test.txt を確認すると、今度は正しく以下のように表示される。
+
+```txt
+あいうえお
+あいうえお
+あいうえお
+・・・
+```
+
+## 永続化処理と例外処理
+
+[モジュール化された処理](##モジュール化された処理) の部分で実装した todo パッケージに、永続化処理と例外処理を追加する。
+
+```js
+'use strict';
+
+// key: タスクの文字列 value: 完了しているかどうかの真偽値
+// ここは、try 文の中で tasks に再代入する部分があるので const でなく let にしている
+let tasks = new Map();
+
+const fs = require('fs');
+const fileName = './tasks.json';
+
+// 同期的にファイルから復元
+try {
+    const data = fs.readFileSync(fileName, 'utf8');
+    tasks = new Map(JSON.parse(data));
+} catch (ignore) {
+    console.log(fileName + 'から復元できませんでした');
+}
+
+
+/**
+ * タスクをファイルに保存する
+ */
+const saveTasks = () => {
+    fs.writeFileSync(fileName, JSON.stringify(Array.from(tasks)), 'utf8');
+}
+
+/**
+ * TODO を追加する
+ * @param {string} task
+ */
+const todo = task => {
+    tasks.set(task, false);
+    saveTasks();
+}
+
+/**
+ * タスクと完了したかどうかが含まれる配列を受け取り、完了したかを返す
+ * @param {array} taskAndIsDonePair
+ * @return {boolean} 完了したかどうか
+ */
+const isDone = taskAndIsDonePair => {
+    return taskAndIsDonePair[1];
+}
+
+/**
+ * タスクと完了したかどうかが含まれる配列を受け取り、完了していないか返す
+ * @param {array} taskAndIsDonePair
+ * @return {boolean} 完了していないかどうか
+ */
+const isNotDone = taskAndIsDonePair => {
+    return !isDone(taskAndIsDonePair);
+}
+
+/**
+ * TODO の一覧の配列を取得する
+ * @return {array}
+ */
+const list = () => {
+    return Array.from(tasks) // Map を、キーと値で構成される要素 2 つの配列に変換する
+        .filter(isNotDone)
+        .map(t => t[0]);
+}
+
+/**
+ * TODO を完了状態にする
+ * @param {string} task
+ */
+const done = task => {
+    if (tasks.has(task)) {
+        tasks.set(task, true);
+        saveTasks();
+    }
+}
+
+/**
+ * 完了済みのタスクの一覧の配列を取得する
+ * @return {array}
+ */
+const donelist = () => {
+    return Array.from(tasks)
+                .filter(isDone)
+                .map(t => t[0]);
+}
+
+/**
+ * 項目を削除する
+ * @param {string} task
+ */
+const del = task => {
+    tasks.delete(task);
+    saveTasks();
+}
+
+// todo 関数 と list 関数をモジュールの関数として追加する
+module.exports = { todo, list, done, donelist, del };
+```
+
+上記のコードで、
+
+```js
+/**
+ * タスクをファイルに保存する
+ */
+const saveTasks = () => {
+    fs.writeFileSync(fileName, JSON.stringify(Array.from(tasks)), 'utf8');
+}
+```
+
+`saveTasks` 関数はタスクをファイルに保存する関数であり、`tasks` という連想配列（Map）を `Array.from` で配列に変換したあと、さらに、`JSON.stringify` という関数で JSON の文字列に変換し、さらに同期的に（Sync）ファイルに書き出している。
+
+この `saveTasks` 関数を、タスクを追加する todo 関数、タスクを完了にする done 関数、タスクを削除する del 関数、以上のそれぞれの処理のあとで呼び出している。
+
+さて、以下の例外処理の部分が例外処理。`catch(ignore)` の ignore には、発生したエラーが渡される（ここでは後続の処理に使わないので ignore という変数名をあてている）
+
+```js
+// 同期的にファイルから復元
+try {
+    const data = fs.readFileSync(fileName, 'utf8');
+    tasks = new Map(JSON.parse(data));
+} catch (ignore) {
+    console.log(fileName + 'から復元できませんでした');
+}
+```
+
+また、処理としては、`fileName` という名前のファイルを読み込み、その中身を `JSON.parse` という関数で解釈（パース）して、連想配列の Map オブジェクトを作るときに渡している。
+
+連想配列の Map は、引数にキーと値の 2 つの要素で与えられる配列の配列を渡すことで、その値が入った連想配列を作成できるため、ここではその機能を利用している（data には `[['鉛筆を買う', false], ['みかんを買う', true], ...]` のような内容が入っている）。
+
+なお、テストコードにおいて、テストの際に存在する `tasks.json` を読み込んでしまいテストが失敗することがある（タスクを追加して、予想通りタスクが追加されているか deepEqual で比較する部分で、元々手動で追加していた他のタスクが存在するせいで不一致となり失敗）。
+ファイルを削除してからテストを実行するようにするには、以下のように書く。
+
+```js
+const fs = require('fs');
+fs.unlink('./tasks.json', (err) => {
+  // テスト処理
+});
+```
+
+上記のように `unlink` 関数に渡す無名関数（コールバック関数）の中で処理を行うことで、非同期処理でも順序を制御し、`tasks.json` ファイルが削除されたあとテストを実行することができる。
