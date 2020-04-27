@@ -1060,3 +1060,400 @@ tmux あるいは　VS Code のコンソールで 2 つウインドウを立ち�
 >- POST でデータを送信するには `-d` オプションのあとにデータ内容を書く。ファイルデータの場合はファイル名の前に `@` をつける
 >    - `curl -d "hoge=0&fuga=1" http://www.example.com`
 >   - `curl -d @hoge.json http://www.example.com`
+
+## HTML のフォーム
+今回は、POST メソッドを利用してアンケートフォームを作る。
+
+### `form` タグ
+`form` タグとは、input タグ等を利用した部品により情報を送信するためのタグ。ラジオボタン、テキストエリア、チェックボックス、セレクトボックスなどの部品を利用することができる。
+
+|要素|HTML タグ|
+|---|---|
+|<input type="radio">ラジオボタン</input>|`<input type="radio">`|
+|<input type="checkbox">チェックボックス</input>|`<input type="checkbox">`|
+|<button>ボタン</button>|`<button>`|
+|<input type="text" value="テキスト"></input>|`<input type="text">`|
+|<textarea>テキストエリア</textarea>|`<textrea>`|
+|<select>|`<select>`|
+|<select size="3">aaa</select>|`<select size="3">`|
+|<progress value=0.3>プログレスバー|`<progress>`|
+
+```html
+<form method="post" action="/enquetes/yaki-shabu">
+```
+
+以上のタグでは、POST メソッドを利用して `/enquetes/yaki-shabu` というパスに対して情報を投稿するように設定している。
+
+`method` 属性には HTTP のメソッド、`action` 属性には URL のパスを設定する。
+
+```html
+<input type="radio" name="yaki-shabu" value="焼き肉" /> 焼き肉
+<input type="radio" name="yaki-shabu" value="しゃぶしゃぶ" /> しゃぶしゃぶ
+```
+
+上記においては、`input` タグを使って部品を配置する。`type` 属性で部品のタイプを指定可能だが、ここでは `radio` という値を使ってラジオボタンを配置している。
+
+`name` 属性は、POST されるデータのキーとなり、`value` 属性は値となる（key-value 構造になる）。
+
+```html
+<button type="submit">投稿</button>
+```
+
+これは、`form` タグで情報を送信する際に利用するボタンとなる `button` タグ。`type` 属性に `submit` と指定する必要がある。
+
+### 作成する HTML
+
+form.html
+
+```html
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>アンケート</title>
+</head>
+
+<body>
+<h1>どちらが食べたいですか？</h1>
+<form method="post" action="/enquetes/yaki-shabu">
+  <input type="radio" name="yaki-shabu" value="焼き肉" /> 焼き肉
+  <input type="radio" name="yaki-shabu" value="しゃぶしゃぶ" /> しゃぶしゃぶ
+  <button type="submit">投稿</button>
+</form>
+</body>
+
+</html>
+```
+
+### サーバーの実装
+次に、index.js を編集して、HTTP サーバーに GET でアクセスした際に、このアンケートフォームを表示するように実装する。
+
+今までの実装に手を加える部分は以下のとおり。
+
+- 'Content-Type'（コンテンツのタイプ）を plain text から html に変更する。
+- GET リクエストがあった場合に、先ほど作成した `form.html` の内容を読み込んで、読み込んだ `form.html` をそのままレスポンスとしてクライアントに返す（この読み込んだものをそのまま返すことを「パイプ」という）。
+- フォームに投稿された情報をログとして出力し、投稿内容を HTML として表示する。
+
+具体的には以下のようなコードになる。
+
+index.js
+
+```js
+'use strict';
+const http = require('http');
+const server = http.createServer((req, res) => {
+  const now = new Date();
+  console.info('[' + now + '] Requested by ' + req.connection.remoteAddress);
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8'
+  });
+
+  switch (req.method) {
+    case 'GET':
+      const fs = require('fs');
+      const rs = fs.createReadStream('./form.html');
+      rs.pipe(res);
+      break;
+    case 'POST':
+      let rawData = '';
+      req.on('data', (chunk) => {
+        rawData = rawData + chunk;
+      }).on('end', () => {
+        const decoded = decodeURIComponent(rawData);
+        console.info('[' + now + '] 投稿: ' + decoded);
+        res.write('<!DOCTYPE html><html lang="ja"><body><h1>' +
+          decoded + 'が投稿されました</h1></body></html>');
+        res.end();
+      });
+      break;
+    default:
+      break;
+  }
+}).on('error', (e) => {
+  console.error('[' + new Date() + '] Server Error', e);
+}).on('clientError', (e) => {
+  console.error('[' + new Date() + '] Client Error', e);
+});
+const port = 8000;
+server.listen(port, () => {
+  console.info('[' + new Date() + '] Listening on ' + port);
+});
+```
+
+**コード詳細**
+
+```js
+const fs = require('fs');
+const rs = fs.createReadStream('./form.html');
+rs.pipe(res);
+```
+
+以上の部分は、`fs` モジュールの `createReadStream` でファイルの読み込みストリームを作成した後、レスポンスのオブジェクト `res` に対して `pipe` 関数で **パイプ** している。
+
+> **パイプについて**  
+> Node.js では Stream 形式のデータは、読み込み用の Stream と書き込み用の Stream をつないでそのままデータを受け渡すことができる。その関数が `pipe` という関数の機能になる。
+>
+> つまりここでは、HTTP のレスポンスのコンテンツとしてファイルの内容をそのまま返すことができるようになる。
+>
+> また、`pipe` 関数を利用した場合は `res.end` 関数を呼ぶ必要がないため、POST メソッドを使った場合のみ `res.end` を行えばよい。
+
+```js
+const decoded = decodeURIComponent(rawData);
+console.info('[' + now + '] 投稿: ' + decoded);
+res.write('<!DOCTYPE html><html lang="ja"><body><h1>' +
+  decoded + 'が投稿されました</h1></body></html>');
+```
+
+上記の部分は、まず最初に JavaScript の decodeURIComponent 関数を利用して、URL エンコードされた値をデコードして元に戻している。
+
+`console.info(...)` の部分は、「yaki-syabu=焼き肉」か「yaki-syabu=しゃぶしゃぶ」のどちらに投稿されたのかをログに残す処理になる。  
+（POST されたデータは、（デコードしないかぎりは）URL エンコードされたうえで、`=` でキーと値を結合された形で送信される（`yaki-shabu=%E7%84%BC%E3%81%8D%E8%82%89` のようになる）。
+
+`res.write(...)` の部分は、投稿内容を HTML の見出しとしてレスポンスとして返している。
+
+## テンプレートエンジン
+今回は、動的にさまざまなアンケートを表jいさせてみる。前回は、焼肉としゃぶしゃぶのアンケートを提供していたが、今回はごはんとパンのアンケートを作っていく。
+
+また、URL のパスを
+
+- enquetes/yaki-shabu にアクセスしたときは焼肉としゃぶしゃぶ
+- enquetes/rice-bread にアクセスしたときはごはんとパン
+
+のようにそれぞれ異なるアンケートを出せるようにする。
+
+### テンプレートエンジンとは
+テンプレートエンジンとは、テンプレートと文字列とプログラムを組み合わせることで、静的なユーザーインターフェースのデータである HTML を動的に出力することができるライブラリ。
+
+今回は pug というものを利用する。pug は、閉じタグが不要なタグの宣言や、入れ子構造に沿った適切なインデントを使うことで、HTML を簡潔
+に表現できる。
+
+まずは pug をインストールする。
+
+```bash
+yarn add pug@2.0.0-rc.4
+yarn global add pug-cli
+echo "node_modules" >> .gitignore
+git add .gitignore
+```
+
+ターミナルで `echo "h1 Pug! | pug` と実行し、`<h1>Pug!</h1>` のように表示されれば問題なくインストールされている。
+
+具体的に、pug の書き方は次のようになる。
+
+```pug
+doctype html
+html(lang="ja")
+  head
+    meta(charset="UTF-8")
+    title アンケート
+  body
+    h1 どちらが食べたいですか？
+    form(method="post" action="/enquetes/yaki-shabu")
+      span 名前:
+      input(type="text" name="name")
+      input(type="radio" name="yaki-shabu" value="焼き肉")
+      span 焼き肉
+      input(type="radio" name="yaki-shabu" value="しゃぶしゃぶ")
+      span しゃぶしゃぶ
+      button(type="submit") 投稿
+```
+
+基本的に要素名、その要素の値、と記述するが、属性は要素名の後に `()` を書き、その中に記述する。
+
+この pug を使って、リクエストのあった path に応じて、複数のアンケートを動的に表示させるようにする。
+
+まず、pug ファイルはこのように記述する。
+
+**form.pug**
+
+```pug
+doctype html
+html(lang="ja")
+  head
+    meta(charset="UTF-8")
+    title アンケート
+  body
+    h1 どちらが食べたいですか？
+    form(method="post" action=path)
+      span 名前:
+      input(type="text" name="name")
+      input(type="radio" name="favorite" value=firstItem)
+      span #{firstItem}
+      input(type="radio" name="favorite" value=secondItem)
+      span #{secondItem}
+      button(type="submit") 投稿
+```
+
+JS は次のような実装になる。
+
+**index.js**
+
+```js
+'use strict';
+const http = require('http');
+// pug モジュールを読み込む
+const pug = require('pug');
+const server = http.createServer((req, res) => {
+  const now = new Date();
+  console.info('[' + now + '] Requested by ' + req.connection.remoteAddress);
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8'
+  });
+
+  switch (req.method) {
+    case 'GET':
+      // リクエストの URL に応じて出しわける
+      if (req.url === '/enquetes/yaki-shabu') {
+        // pug モジュールを利用して `form.pug` を描画し、レスポンスに書き出す。また、描画の関数 renderFile() に、埋め込みたい変数をプロパティとして持っているオブジェクトを渡してあげる
+        res.write(pug.renderFile('./form.pug', {
+          path: req.url,
+          firstItem: '焼き肉',
+          secondItem: 'しゃぶしゃぶ'
+        }));
+      } else if (req.url === '/enquetes/rice-bread') {
+        res.write(pug.renderFile('./form.pug', {
+          path: req.url,
+          firstItem: 'ごはん',
+          secondItem: 'パン'
+        }));
+      }
+      res.end();
+      break;
+    case 'POST':
+      let rawData = '';
+      req.on('data', (chunk) => {
+        rawData = rawData + chunk;
+      }).on('end', () => {
+        const decoded = decodeURIComponent(rawData);
+        console.info('[' + now + '] 投稿: ' + decoded);
+        res.write('<!DOCTYPE html><html lang="ja"><body><h1>' +
+          decoded + 'が投稿されました</h1></body></html>');
+        res.end();
+      });
+      break;
+    default:
+      break;
+  }
+}).on('error', (e) => {
+  console.error('[' + new Date() + '] Server Error', e);
+}).on('clientError', (e) => {
+  console.error('[' + new Date() + '] Client Error', e);
+});
+const port = 8000;
+server.listen(port, () => {
+  console.info('[' + new Date() + '] Listening on ' + port);
+});
+```
+
+このように実装すると、`http://localhost:8000/enquetes/yaki-shabu`、`http://localhost:8000/enquetes/rice-bread` それぞれにアクセスすると 2 つのアンケートが出し分けられる。
+
+ごはんとパンのアンケートに答えると、`name=thesugar&favorite=パンが投稿されました` のようにブラウザには表示され、コンソールにも `[Mon Apr 27 2020 16:56:22 GMT+0000 (UTC)] 投稿: name=thesugar&favorite=パン` のように表示される（複数の POST されたデータは & で連結される）。
+
+## Heroku で Web サービスを公開
+### 準備手順
+- Heroku アカウント作成
+- Heroku CLI のインストール
+  - どのようにやってもいいんだろうけど、教材では `sudo snap install --classic heroku` とやっている（Ubuntu環境）。`snap` コマンドは apt と同じようなパッケージマネージャである Snappy を操作するコマンド。Snappy は既存のアプリケーションやシステムの影響を受けないという特徴を持つ。
+  - `heroku help` とすればコマンドの使い方が表示される。
+  - `heroku login -i` とするとログインできる
+- プロジェクトディレクトリで `Procfile` を作成する
+  - `Procfile` は、Heroku がアプリを動作させる際に「どのようなコマンドを実行すべきなのか」を認識するための設定ファイル。
+- 次に `app.json` というファイルを作成し、以下のように書く。これは、Heroku で動かすアプリの説明ファイル。
+
+  ```json
+  {
+    "name": "Enquetes",
+    "description": "Enquetes for favorite foods.",
+    "repository": "https://github.com/progedu/node-js-http-3016",
+    "logo": "",
+    "keywords": ["node"],
+    "image": "heroku/nodejs"
+  }
+  ```
+- そうしたら次に `package.json` に engines を追記。
+
+  ```json
+  ...}, "engines": {
+    "node" : "~10"
+  }
+  ```
+- 最後に、`index.js` の `const port = 8000` の部分を以下のように書き換える。
+
+  ```js
+  const port = process.env.PORT || 8000;
+  ```
+
+ここまで完了したら、いったんローカルで動作確認をして問題ないか試す。
+
+```bash
+# 必要なら
+# yarn install
+node index.js
+```
+
+問題ないようであれば、Git のリポジトリにコミットする。
+
+```bash
+git add .
+git commit -am "Heroku で起動できるように変更"
+```
+
+Heroku ではサーバー上へソースコードを配置する（デプロイする）ために Git を利用しているため、Heroku での実行前にはこのように Git のリポジトリにコミットすることが必要。
+
+### デプロイ手順
+まずはサーバの用意をする。
+
+```bash
+heroku create
+```
+
+`heroku create` は、ランダムな名前のサーバ名で Heroku にサーバを用意し、そのサーバの Git のリポジトリを heroku という名前のリモートリポ一人として登録する。
+
+なお Heroku ではサーバーは仮想化されており、この 1 サーバーを Dyno（ダイノ）という単位で呼ぶ。
+
+*⚠️*　ここで注意点！同一ディレクトリ内で 2 回以上 `heroku create` すると設定がややこしくなり、以降の作業に支障をきたす。`heroku create` は必ず 1 回だけ実行すること。
+
+```bash
+Creating app... done, xxx-xxx-XXXX
+https://xxx-xxx-XXXX.herokuapp.com/ | https://git.heroku.com/xxx-xxx-XXXX.git
+```
+
+以上のように表示される。ここの `...herokuapp.com` の URL がサーバーの URL になる。
+
+> Tips  
+2 回以上 heroku create してしまったとき
+同一ディレクトリ内で 2 回以上 heroku create してしまった場合は、heroku info で 今使用している Heroku サーバーの情報を確認しましょう。
+ここで表示される URL が デプロイ先のサーバーです。デプロイ後はこの URL にパスを追加して確認しましょう。
+また heroku apps で、あなたの Heroku にあるすべてのサーバー一覧を確認できます。
+heroku destroy --app サーバー名 --confirm サーバー名 で Heroku サーバーを削除できるので、不要なものは削除しましょう。
+
+次にデプロイを行う。
+
+```bash
+git push heroku master-2019:master
+```
+↑の Git コマンドは、 heroku（リモート）の master にローカルの （たとえば）master-2019（の名前のリポジトリ） を push するという意味。
+
+デプロイ実行後、最終的に
+
+```
+remote: Verifying deploy.... done.
+```
+
+と表示されれば成功。そうすれば、さきほどの URL に path を追加してアクセスすれば動作を確認できる。
+
+投稿した内容がログに表示されているかを確認するには、
+
+```bash
+heroku logs
+```
+
+を実行すると、ログが表示される。Heroku のログ機能自体に、日付を出力する機能があるため、アプリ側で日時を書き出す処理を書いていると、日時が二重で表示される。
+
+なお、`heroku logs` コマンドを入力しても何も表示されない場合は
+
+```bash
+heroku logs -a xxx-xxx-XXXX
+```
+
+を試してみること。`xxx-xxx-XXXX` は先ほど表示されたサーバーのホスト名。忘れた場合は `heroku apps` で確認できる。
