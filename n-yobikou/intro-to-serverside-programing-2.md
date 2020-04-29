@@ -456,6 +456,7 @@ lib/posts-handler.js
 ```js
 'use strict';
 const pug = require('pug');
+const contents = [];
 
 const handle = (req, res) => {
     switch (req.method) {
@@ -474,6 +475,8 @@ const handle = (req, res) => {
                 const decoded = decodeURIComponent(body);
                 const content = decoded.split('content=')[1];
                 console.info('投稿されました: ' + content);
+                contents.push(content);
+                console.info('投稿された全内容: ' + contents)
                 handleRedirectPosts(req, res);
             });
             break;
@@ -547,3 +550,713 @@ function handleRedirectPosts(req, res) {
 ```
 
 と表示される。
+
+## 認証された投稿の一覧表示機能
+投稿機能ができあがったところで、今度は、認証されたユーザーにのみ投稿一覧が表示される機能を作っていく。
+
+認証を実装するために、まずは前にも利用した [http-auth](https://www.npmjs.com/package/http-auth) というパッケージをインストールする。
+
+```bash
+yarn add http-auth@3.2.3
+```
+
+[http-auth](https://www.npmjs.com/package/http-auth) の使い方を調べると、ファイルを利用してユーザーを登録する方法がある。
+
+今回はその方法を利用して、`index.js` に実装していく。
+
+まずはユーザーファイル一覧を作る。
+
+**`users.htpasswd` ファイル**
+
+```
+admin:apple
+guest1:1234
+guest2:5678
+```
+
+ここでは、`admin`、`guest1`、`guest2` というユーザーを追加し、それぞれのユーザー名の `:` の後にパスワードを記述して設定している（*⚠️* ここでは平文で管理してしまっていることに注意。機能開発を優先するためいったん平文管理のまま実装するが、最後にセキュリティ問題を解決する実装を学ぶ）。
+
+次に、`index.js` に Basic 認証を実装する。
+
+<details close>
+<summary>index.js 変更差分</summary>
+
+```diff
+ 'use strict';
+ const http = require('http');
++const auth = require('http-auth');
+ const router = require('./lib/router');
+
++const basic = auth.basic({
++  realm: 'Enter username and password.',
++  file: './users.htpasswd'
++});
++
+-const server = http.createServer((req, res) => {
++const server = http.createServer(basic, (req, res) => {
+   router.route(req, res);
+ }).on('error', (e) => {
+   console.error('Server Error', e);
+```
+</details>
+
+### ログアウト機能を作ろう
+ログアウトは、`/logout` というパスにアクセスして、ステータスコードの 401 - Unauthorized を返す必要がある。
+
+これに伴い、 `/posts` 以外へのアクセスをハンドリングする必要があるので `handler-util` という `/posts` 以外のリクエストをハンドリングするモジュールも作成しよう。
+
+と、その前に、`lib/router.js` を以下のように変更（追記）する。
+
+<details close>
+<summary>lib/router.js</summary>
+
+```js
+'use strict';
+const postsHandler = require('./posts-handler');
+const util = require('./handler-util');
+
+const route = (req, res) => {
+    switch (req.url) {
+        case '/posts':
+            postsHandler.handle(req, res);
+            break;
+        case '/logout':
+            util.handleLogout(req, res);
+            break;
+        default:
+            break;
+    }
+}
+
+module.exports = {
+    route
+};
+```
+
+</details>
+
+次に、`lib/handler-util.js` を以下のように実装する。
+
+<details close>
+<summary>lib/handler-util.js</summary>
+
+```js
+'use strict';
+
+const handleLogout = (req, res) => {
+    res.writeHead(401, {
+        'Content-Type': 'text/plain; charset=utf-8'
+    });
+    res.end('ログアウトしました');
+}
+
+module.exports = {
+    handleLogout
+};
+```
+</details>
+
+これは、ステータスコード 401 - Unauthorized を返し、その後「ログアウトしました」というテキストをレスポンスに書き込むモジュールである。
+
+最後に、テンプレート `views/posts.pug` にログアウト用のリンクを加える。
+
+```diff
+     h1 秘密の匿名掲示板
++    a(href="/logout") ログアウト
+     h2 新規投稿
+```
+
+### 実装されていない URL には 404 - Not Found を返すようにする
+現在は `/posts` と `/logout` 以外のパスへアクセスした際は、サーバーがレスポンスを返さないため、ずっとブラウザ上の表示が終わらない（読み込み中のまま、どうにもならない）。
+
+ここで、現在処理が実装されていない URL にアクセスした際には 404 - Not Found を返すようにしたい。
+
+まず、`lib/router.js` の `switch　(req.url)` で振り分けている部分の `default:` に以下を追加する。
+
+```diff
+     default:
++      util.handleNotFound(req, res);
+       break;
+```
+
+ここでは、*`handleNotFound` という関数がある前提で実装している。*
+
+次に、`lib/handler-util.js` にも以下を追記する。
+
+```js
+// ...略
+const handleNotFound = (req, res) => {
+    res.writeHead(404, {
+        'Content-Type': 'text/plain; charset=utf-8'
+    });
+    res.end('ページが見つかりません。');
+}
+
+module.exports = {
+    handleLogout,
+    handleNotFound
+};
+```
+
+### 投稿内容一覧ページを作ろう
+今度は投稿内容一覧を作っていく。
+投稿した内容は、アプリケーション内の配列 `contents` に格納sあれているので、それを表示するようにすればよい。
+
+複数の項目をテンプレートで機能させるには、テンプレートエンジン [pug](https://pugjs.org/language/iteration.html) の iteration の機能を用いる。
+
+投稿内容の配列 `contents` がそのまま、テンプレート内でも利用できると仮定し、以下のように `posts.pug` に追記する。
+
+```pug
+// 投稿ボタンの下に以下を追記
+h2 投稿一覧
+each content in contents
+    p #{content}
+    hr
+```
+
+そうしたら、`lib/posts-handler.js` を以下のように変更して、テンプレートファイルに contents を渡すようにする。。
+
+```js
+res.end(pug.renderFile('./views/posts.pug', { contents: contents })); // ※ここは {contents: contents} じゃなくて {contents} としてよい。
+```
+
+### 未対応のメソッドのリクエストの処理
+`lib/posts-handler.js` において、対応されていないメソッドのリクエストが来た際に、400 - Bad Request というステータスコードを返し、「未対応のメソッドです」というテキストを返すように実装する。
+
+<details close>
+<summary>lib/posts-handler.js</summary>
+
+まずは `handler-util` をインポートする。
+
+```js
+const util = require('./handler-util');
+```
+
+その後、`switch (req.method)` でリクエストメソッドによって振り分けている部分の default 句で未対応のリクエストへのハンドラを呼ぶ（`handleBadRequest` が実装済みという想定で）。
+
+```js
+default:
+    util.handleBadRequest(req, res);
+    break;
+```
+</details>
+
+
+<details close>
+<summary>lib/handler-util.js</summary>
+
+以下の関数を追加する（もちろん `module.exports` にも `handleBadRequest` を追加すること）。
+
+```js
+const handleBadRequest = (req, res) => {
+  res.writeHead(400, {
+    'Content-Type': 'text/plain; charset=utf-8'
+  });
+  res.end('未対応のメソッドです');
+}
+```
+</details>
+
+## データベースへの保存機能の実装
+ここまで認証機能と投稿、投稿の一覧機能などを作ってきた。
+
+ただし、投稿内容をアプリケーション上の配列に保存しているため、Node.js のサーバーを再起動すると投稿された内容が消えてしまう。
+
+そこで今回は [PostgreSQL](https://www.postgresql.org/) （ポストグレスキューエル）という DB を利用して、投稿内容をファイル上に保存できるようにする（本セクションでは、詳細までは立ち入らず、とりあえず使えるレベルまで）。
+
+### PostgreSQL をインストールする
+PostgreSQL のインストールから（以下は Ubuntu 前提）。
+
+```bash
+sudo apt update
+sudo apt install -y postfresql-10
+```
+
+次に、以下のコマンドを実行する。
+
+```bash
+sudo su - postgres
+```
+
+これは、`postgres` という名前の Linux ユーザーでログインするというコマンド。次に、
+
+```bash
+psql
+```
+
+以上で、PostgreSQL のターミナル型フロントエンドを起動する。
+
+> この部分で 
+> ```
+> psql: could not connect to server: No such file or > directory
+>         Is the server running locally and accepting
+>         connections on Unix domain socket "/var/run/postgresql/.s.PGSQL.5432"?
+> ```
+> というエラーが出たら、`service postgresql start` とすることで PostgreSQL のサーバーを起動すれば解決するはず）
+
+
+以下のように表示されればターミナル型フロントエンドの起動は成功。
+
+```bash
+$ psql
+psql (10.12 (Ubuntu 10.12-0ubuntu0.18.04.1))
+Type "help" for help.
+```
+
+### パスワードを設定する
+そうしたら、以下のコマンドを実行する。
+
+```sql
+alter role postgres with password 'postgres';
+```
+
+これは `postgres` という PostgreSQL 内のユーザーのパスワードを `postgres` というパスワードに変更するもの。この DB は開発専用であるため簡単なパスワードを設定している。
+
+```
+ALTER ROLE
+```
+
+と表示されれば成功。
+
+### データベースを作成する
+`psql` のターミナルに今度は
+
+```sql
+create database secret_board;
+```
+
+以上を入力する。これで `secret_board` という名前のデータベースが作成される。
+
+```
+CREATE DATABASE
+```
+
+と表示されればデータベースの作成は成功。
+
+最後に、`\q` というコマンドを打って psql のターミナルを終了し、さらに `exit` と打って Linux 上の postgres ユーザーからログアウトし、元のユーザーに戻す。
+
+### ソースコードからデータベースを扱ってみよう
+では、ここから、ソースコードにデータベースを使う実装を入れていく。
+
+#### sequelize をインストールする
+Node.js には DB を利用するためのライブラリがたくさんあるが、ここではデータベース特有のコマンドを知らなくても済むパッケージの sequelize を利用していく。
+
+```bash
+yarn add sequelize@4.33.4
+yarn add pg@7.4.1
+yarn add pg-hstore@2.3.2
+```
+
+（*⚠️*: sequelize は古いバージョンでは正常に動作しないおそれがあるため、必ず sequelize@4.33.4 以降をインストールすること）
+
+無事すべてエラーが出ずにインストールできれば、sequelize というモジュールで PostgreSQL を利用できる。
+
+#### データベースの構成について考える
+次に、DB にどのような情報を入れたいのか考えてみる。DB には、特定の形式でデータを格納する必要がある。このように、*データの形式を定めること* を **データモデリング** という。
+
+この秘密の匿名掲示板では「投稿」という情報を DB に登録していく必要がある。
+
+この投稿の情報はどのような要素を持っているか、ということを、後で追加する機能まで考えていくと
+
+- 投稿内容
+- 投稿したユーザー名
+- トラッキング Cookie の内容
+- 作成日時
+
+これらが必要になる。これら 4 つの情報を保存できるように sequelize の実装をしていく。
+
+まずは、データの保存などを行うモジュール `lib/post.js` を作成する。
+
+`lib/post.js`
+
+```js
+'use strict';
+const Sequelize = require('sequelize');
+const sequelize = new Sequelize(
+  'postgres://postgres:postgres@localhost/secret_board',
+  {
+    logging: false,
+    operatorsAliases: false 
+  });
+const Post = sequelize.define('Post', {
+  id: {
+    type: Sequelize.INTEGER,
+    autoIncrement: true,
+    primaryKey: true
+  },
+  content: {
+    type: Sequelize.TEXT
+  },
+  postedBy: {
+    type: Sequelize.STRING
+  },
+  trackingCookie: {
+    type: Sequelize.STRING
+  }
+}, {
+  freezeTableName: true,
+  timestamps: true
+});
+
+Post.sync();
+module.exports = Post;
+```
+
+**解説**
+- `const Sequelize = require('sequelize');` でまず sequelize をモジュールとして読み込んでいる
+- `const sequelize = new Sequelize(...)` の部分は、DB の設定を渡したうえで、秘密の匿名掲示板を表すデータベースのインスタンスを生成している。
+- また、ここでは sequelize が出すログの設定をオフにしており、かつ sequelize の演算子エイリアス（Operators Aliases）も使わないためオフにしている（[このドキュメント](https://sequelize.org/v4/manual/tutorial/querying.html#operators-aliases)が参考になる。SQL インジェクションを防ぐためにユーザーからの入力をサニタイズするようなときに設定するっぽい？）。
+- `const Post = sequelize.define('Post', {id: {}, ...}, {freezeTableName: true, timestamps: true});` の部分は、先ほど定義したデータモデルを sequelize の形式にしたがって記述したもの。投稿を `Post` という名前のオブジェクトとして定義している。
+- 以下は、DB にデータを入れる際に自動的に増加する整数値を ID として保存してくれる機能をつける設定。入力する情報が一意に特定できるような固有の ID を付加し、それが本当に固有であるのかどうかをチェックしてくれる **primaryKey** という設定をしている。
+    ```js
+    id: {
+    type: Sequelize.INTEGER,
+    autoIncrement: true,
+    primaryKey: true
+    },
+    ```
+    > **主キー**  
+    > DB に情報を格納する際には、あとでその情報を参照するためにキーとなる情報を一緒に付加して保存する。この、情報を一つに特定するための固有な（一意の）データのことを **主キー**（Primary Key）という。  
+    この主キーは、DB に格納したデータを後で高速に参照したい場合、設定する必要がある。今後実装する、投稿の削除機能を実現する際に必要となる。（とはいえ RDB では主キーはほぼ必須で設定するイメージだけど（個人的な感想））
+- ```js
+  content: {
+    type: Sequelize.TEXT
+  },
+  ```
+  `content` は、投稿内容を表す。制限のない大きな長い文字列を保存できる設定にしている。
+- ```js
+  postedBy: {
+    type: Sequelize.STRING
+  },
+  ```
+  `postedBy` は、投稿したユーザーの名前。255 文字までの長さを保存できる設定にしている。
+- ```js
+  trackingCookie: {
+    type: Sequelize.STRING
+  }
+  ```
+  `trackingCookie` は、後ほどユーザーごとに付与する Cookie に保存する値。これも、255 文字までの長さを保存できる設定にしている。
+- ```js
+    {
+    freezeTableName: true,
+    timestamps: true
+    }
+  ```
+  この `freezeTableName` は、テーブル名を `Post` という名前に固定するという設定。  
+  `timestamps: true` は、`createdAt` という作成日時と `updatedAt` という更新日時を*自動的に*追加してくれる設定。
+- `Post.sync();` は、定義をした Post というオブジェクト自体をデータベースに適用して同期を取っている。
+- `module.exports = Post;` は、このオブジェクト自体をモジュールとしてエクスポート（公開）している。
+
+`lib.post.js` モジュールの実装はこれで完了。
+
+---
+#### データベースに保存する
+次に、`lib/posts-handler` でデータベースに保存するように実装していく。
+
+まず、以下のとおり、上記で作成した post モジュールをインポートする。
+
+```js
+const Post = require('./post');
+```
+
+その後、以下のような処理を追記する。
+
+```js
+case 'POST':
+    let body = [];
+    req.on('data', chunk => {
+        body.push(chunk);
+    }).on('end', () => {
+        body = Buffer.concat(body).toString();
+        const decoded = decodeURIComponent(body);
+        const content = decoded.split('content=')[1];
+        console.info('投稿されました: ' + content);
+        contents.push(content);
+        console.info('投稿された全内容: ' + contents);
+        // 新しく追記するのは ↓ ここから！
+        Post.create({
+            content: content, // ここは content, で OK
+            trackingCookie: null,
+            postedBy: req.user
+        }).then(() => {
+            handleRedirectPosts(req, res);
+        });
+    });
+    break;
+```
+
+以上の、`Post.create({...})` という部分は、sequelize のデータベース上にデータを作る方法である。投稿内容は content をそのまま使う。Cookie は未実装なのでいったん null にし、投稿したユーザー名は `req.user` で取得する。
+
+これでさっそく起動してみる。http://localhost:8000/posts にアクセスして投稿してみたら、以下のコマンドで DB の内容を表示してみる。
+
+```sql
+sudo su -postgres
+psql
+\c secret_board // `secret_board` テーブルに接続（connect）
+select * from "Post";
+```
+
+こうすると、DB の内容が表示されるはず。
+
+```
+ id |      content       | postedBy | trackingCookie |         createdAt          |         updatedAt          
+----+--------------------+----------+----------------+----------------------------+----------------------------
+ 10 | あいうえお | admin    |                | 2020-04-29 20:34:49.996+00 | 2019-04-29 20:34:49.996+00
+(1 row)
+```
+
+ここまで確認できたら、q を押してデータベースの表示を終了し、
+
+```
+\q
+exit
+```
+
+と入力して、postgres ユーザーのセッションからログアウトする。
+
+#### データベースから読み出す
+次は DB から読み出す実装をする。
+`lib/posts-handler.js` は今まで、そのモジュールの中で配列（`contents`）を持って、そこに投稿内容を push していって、その配列を表示する、という格好になっていたが、DB を導入したので、DB から読み出すようにする。
+
+```diff
+ const pug = require('pug');
+ const util = require('./handler-util');
+ const Post = require('./post');
+-const contents = [];
+```
+
+```diff
+     'Content-Type': 'text/html; charset=utf-8'
+   });
+-  res.end(pug.renderFile('./views/posts.pug', { contents: contents }));
++  Post.findAll().then((posts) => {
++    res.end(pug.renderFile('./views/posts.pug', {
++      posts: posts
++    }));
++  });
+   break;
+ case 'POST':
+   let body = [];
+   req.on('data', (chunk) => {
+     body.push(chunk);
+   }).on('end', () => {
+     body = Buffer.concat(body).toString();
+     const decoded = decodeURIComponent(body);
+     const content = decoded.split('content=')[1];
+     console.info('投稿されました: ' + content);
+-    contents.push(content);
+-    console.info('投稿された全内容: ' + contents);
+     Post.create({
+       content: content,
+       trackingCookie: null,
+```
+
+`Post.findAll().then(...)` のところは、sequelize にて投稿内容を取得する実装。自前で実装しなくても findAll() みたいなビルトインのメソッドが使える！なお、findAll() の引数に `{order: [['id', 'DESC']]}` を与えれば、*連番で作成した ID の**降順**にソートされた情報が取得できる（つまり、後で投稿されたものほど先（上）に表示されるようになる）*。
+
+また、今までは `contents` という配列を pug テンプレートに渡していたが、今回の変更で、データベースから取得したデータである `posts` を渡すように変更している。
+
+#### データベースから取得したデータを表示しよう
+今度は、`contents` を `posts` に変更したことを受け、pug テンプレートも修正する。
+
+**views/posts.pug**
+```diff
+       div
+         button(type="submit") 投稿
+     h2 投稿一覧
+-    each content in contents
+-      p #{content}
++    each post in posts
++      p #{post.content}
++      p 投稿日時: #{post.createdAt}
+       hr
+```
+
+投稿内容に加えて、作成日時を表示するようにテンプレートを変更している。
+これで今一度 http;//localhost:8000/posts にアクセスしてみると、ログイン後、投稿内容と投稿日時が表示される！
+
+> Tips: データベースの初期化  
+  ```bash
+  sudo su - postgres
+  psql
+  ```
+> まずは以上のようにして PostgreSQL の対話型フロントエンドを起動する。そこへ  
+
+```sql
+drop database secret_board;
+create database secret_board;
+```
+
+> と入力すれば、データベースを削除し再作成することができる。
+
+## トラッキング Cookie の実装
+ここまでの実装で、秘密の匿名掲示板の基本的な機能が利用できるようになった。ここからは基本機能をより良いものにし、運用できるようにするための実装に入る。
+
+残された要件は
+
+- 自身の投稿内容を削除できる
+- 管理人機能
+- 匿名だけど同じユーザーであることを認識でき、自作自演を防止できる
+
+この 3 つだが、このセクションでは 3 番目の自作自演防止機能を実装していく。ここでは、一日で有効期限が切れるように設定した Cookie を利用してみる。
+
+では、Cookie を付与して、その日の間だけは同じ人の投稿だとわかるようにしよう。仕組みとしては、`/posts` にアクセスがあった際、
+
+- Cookie がついていなければ追跡するための情報を付与
+- Cookie がついていれば何もしない
+- 投稿時に Cookie から追跡するための情報を取得してそれを投稿の情報に含める
+
+このような要件として実装していく。なお、このようにユーザーの行動を追跡するために付与される Cookie のことを **トラッキング Cookie** と呼ぶ。
+
+具体的な Cookie としては `tracking_id` という名前で、値には**トラッキング ID** をランダムな正の整数値で保存するように実装してみる。
+
+なお、この仕様では `tracking_id` が偽装されたときに、サーバーで生成されたことを検証することができない、というセキュリティの問題がある（つまり偽装し放題）。この問題については別のセクションで修正するものとし、今回はそのまま実装する。
+
+### cookies モジュールをインストールする
+今回は、Cookie を利用するために [cookies](https://github.com/pillarjs/cookies) というモジュールを利用する。このモジュールは、Cookie をヘッダに書き込む際に簡単な API で Cookie を利用することができるライブラリである。（<font size=0.1>2020/4/29 時点で GitHub 1000 スター程度だけど実際の使用に耐えるのか？</font>）
+
+```bash
+yarn add cookies@0.5.1
+```
+
+それでは、
+
+- Cookie がついていなければ追跡するための情報を付与
+- Cookie がついていれば何もしない
+
+以上の要件を実装していく。
+
+`lib/posts-handler.js` を以下の差分のように編集する。
+
+```diff
+ 'use strict';
+ const pug = require('pug');
++const Cookies = require('cookies');
+ const util = require('./handler-util');
+ const Post = require('./post');
+
++const trackingIdKey = 'tracking_id';
+```
+
+ここでは、cookies をモジュールとして読み込み、あとで使う Cookie の名前として `trackingIdKey` という定数を定義している。
+
+```diff
+ function handle(req, res) {
++  const cookies = new Cookies(req, res);
++  addTrackingCookie(cookies);
++
+  switch (req.method) {
+    case 'GET':
+      res.writeHead(200, {
+```
+
+`handle` 関数の処理の中で、cookies の API に合わせて、`cookies` オブジェクトの作成を行い、`addTrackingCookie` という **関数がある前提** で関数を呼び出している。
+
+```js
+function addTrackingCookie(cookies) {
+  if (!cookies.get(trackingIdKey)) {
+    const trackingId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    const tomorrow = new Date(Date.now() + (1000 * 60 * 60 * 24));
+    cookies.set(trackingIdKey, trackingId, { expires: tomorrow });
+  }
+}
+
+function handleRedirectPosts(req, res) {
+    // ...
+}
+```
+
+`addTrackingCookie` は以上のように実装する。引数に `cookies` オブジェクトを受け取る。
+
+```js
+if(!cookies.get(trackingIdKey)) {
+```
+
+この `!cookies.get(trackingIdKey)` は、cookies の API に合わせて、`trackingIdKey` で指定された名前の Cookie の値を取得し、否定演算子 `!` を前に置くことで、`get` 関数で取得した値が undefined や null などの falsy な値のときに true となる式。
+
+つまりこの if 文は、値がないときに処理を実行する。
+
+```js
+const trackingId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+```
+
+↑では、ランダムな整数値を生成してトラッキング ID としている。`Math.random` 関数は 0 以上 1 未満のランダムな小数を返すので、それに整数の最大値をかけ、Math.floor 関数で小数点以下を切り捨てている。
+
+> `Math.random()`は（もちろん？）擬似乱数（本当の乱数ではなくアルゴリズムによって擬似的に生成されたもの）。
+
+```js
+const tomorrow = new Date(Date.now() + (1000 * 60 * 60 * 24));
+```
+
+Date クラスにミリ秒を渡して new でオブジェクトを生成すると、そのミリ秒が指し示す時刻の Date オブジェクトが生成できる。`tommorow` は 1 日後の Date オブジェクトになる。
+
+```js
+cookies.set(trackingIdKey, trackingId, { expires: tomorrow });
+```
+
+上記コードは、定数 `trackingIdKey` で指定された名前でトラッキング ID の Cookie を設定し、オプションのオブジェうととして、24 時間後の明日に有効期限が切れるように、先ほど作った Date オブジェクト `tommorow` を渡している。
+
+ここまで完了したら、`node index.js` で起動して、http://localhost:8000/posts にアクセスしてログインする。  
+Chrome のデベロッパーツールの Application タブから Cookies の項目の localhost を選択し、`tracking_id` の値が含まれていることを確認する。  
+また、Expires の項目が 24 時間後に設定されていることも確認する。  
+さらに、再読み込みをしても `tracking_id` の値が変化しなければ、実装がうまくいっている。  
+なお、Cookie を削除して（左側のバーで右クリック -> Clear で localhost:8000 用の Cookie 全削除あるいは個別のクッキーの上で右クリック -> Delete で個別削除）、またページを再読み込みすると、`tracking_id` には新たな値が設定される。
+
+### トラッキング ID を保存し、表示する
+今度は、トラッキング ID をデータベースへの書き込み時に保存し、それを投稿一覧で表示させてみる。
+
+`lib/posts-handler.js` の実装において、今まで `trackingCookie: null` としていた部分は以下の変更差分のように編集する。
+
+```diff
+ console.info('投稿されました: ' + content);
+ Post.create({
+   content: content,
+-  trackingCookie: null,
++  trackingCookie: cookies.get(trackingIdKey),
+   postedBy: req.user
+ }).then(() => {
+   handleRedirectPosts(req, res);
+```
+
+`cookies` の `get` 関数でクッキーの値を取得してデータベースに保存する（この時点では、先ほどの実装によりユーザーには必ずクッキーが付与されている）。
+
+そして、`views/posts.pug` に以下を追加する。
+
+```diff
+       h2 投稿一覧
+       each post in posts
++        h3 #{post.id} : ID:#{post.trackingCookie}
+         p #{post.content}
+         p 投稿日時: #{post.createdAt}
+         hr
+```
+
+投稿自体の ID（主キー） と投稿者のトラッキング ID をそれぞれ表示するようにした。
+
+さらに、*閲覧情報をサーバーのログに残す*ようにしてみる。
+
+<details close>
+<summary> lib/posts-handler.js </summary>
+
+`switch (req.method)` で、リクエストのメソッドごとに処理を振り分けている部分で、GET 要求に対しての処理を書く部分。以下を追記する。
+
+```diff
+     res.end(pug.renderFile('./views/posts.pug', {
+       posts: posts
+     }));
++    console.info(
++      `閲覧されました: user: ${req.user}, ` +
++      `trackingId: ${cookies.get(trackingIdKey) },` +
++      `remoteAddress: ${req.connection.remoteAddress} ` +
++      `userAgent: ${req.headers['user-agent']}`
++    );
+   });
+   break;
+ case 'POST':
+```
+
+これで、ユーザー名とトラッキング ID とリモートアドレス（クライアントの IP アドレス）とユーザーエージェントがログに出力される。
+</details>
+
+ここまで完了したら、サーバを起動して、http://localhost:8000/posts にアクセスして確認してみる。
+
+ちなみに、やはりこの実装だと、開発者ツールで Cookie を手打ちで変更するだけで、いくらでも偽装できてしまう（掲示板に投稿者の ID として表示される ID 情報も変更できる）。
