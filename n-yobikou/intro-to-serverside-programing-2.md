@@ -1254,9 +1254,515 @@ Chrome のデベロッパーツールの Application タブから Cookies の項
  case 'POST':
 ```
 
-これで、ユーザー名とトラッキング ID とリモートアドレス（クライアントの IP アドレス）とユーザーエージェントがログに出力される。
+これで、ユーザー名（`users.htpasswd` に登録したもの＝Basic 認証のユーザー名）とトラッキング ID とリモートアドレス（クライアントの IP アドレス）とユーザーエージェントがログに出力される。
 </details>
 
 ここまで完了したら、サーバを起動して、http://localhost:8000/posts にアクセスして確認してみる。
 
 ちなみに、やはりこの実装だと、開発者ツールで Cookie を手打ちで変更するだけで、いくらでも偽装できてしまう（掲示板に投稿者の ID として表示される ID 情報も変更できる）。
+
+## 削除機能の実装
+1 日で有効期限を迎えるトラッキング Cookie を利用する実装を行ったので、残る要件は
+
+- 自身の投稿内容を削除できる
+- 管理人機能
+
+の 2 つになる。今回実装するのは、「自身の投稿内容を削除できる機能」。
+
+この削除機能において、DB が活躍する。
+仮にファイルで全ての投稿を管理していた場合、目的の投稿をファイルの中から探して削除する機能を自分で実装しなければならないが、DB を利用している場合は、DB の削除機能を使えば簡単に実現できる。
+
+### 削除 UI の作成
+まずは削除を実行するための UI を作成する。
+`views/posts.pug` を以下のように編集する。
+
+```diff
+       h3 #{post.id} : ID:#{post.trackingCookie}
+       p #{post.content}
+       p 投稿日時: #{post.createdAt}
++      - var isDeletable = (user === post.postedBy)
++      if isDeletable
++        form(method="post" action="/posts?delete=1")
++          input(type="hidden" name="id" value=post.id)
++          button(type="submit") 削除
+       hr
+```
+
+**解説**
+
+以下のコードは、pug のテンプレート内に JavaScript のコードを記述する方法である。各投稿を行ったユーザーのユーザー名 `post.postedBy` が、アクセスしているユーザー名 `user` と同じ場合に、削除可能であるという変数が true になる。（`const` でも OK）
+
+```pug
+- var isDeletable = (user === post.postedBy)
+```
+
+次に、 `if isDeletable` は pug のテンプレートにおいて条件分岐をする方法。  
+if ブロック配下（`form` 以下の部分）は削除を行うフォームとそのボタン。`/posts?delete=1` というパスに POST メソッドでリクエストを送る。
+
+`input` 要素の `type` 属性として `hidden` を指定すると、画面には非表示の部品になる。この非表示の部品で、投稿につけられた ID を送るようにしている。  
+この ID を用いて削除処理をサーバー上で行う。
+
+次に、サーバー側で、リクエストをしたユーザー名を pug テンプレートから `user` という名前で使えるように（＝上の `(user === post.postedBy)` の `user` にちゃんとユーザーが入るように）する。
+
+`lib/posts-handler.js` を以下のように実装する（`pug.renderFile('pugのpath', { pugファイルに渡すオブジェクト })` の部分で、ユーザーを受け渡せばいいだけ）。なお、`req.user` には Basic 認証で認証したユーザー名（admin やら guest1 やら）が入っている。
+
+```diff
+ });
+ Post.findAll({ order: [['id', 'DESC']] }).then((posts) => {
+   res.end(pug.renderFile('./views/posts.pug', {
+-    posts: posts
++    posts: posts,
++    user: req.user
+   }));
+   console.info(
+   `閲覧されました: user: ${req.user}, ` +
+```
+
+ここまで実装すると、各投稿の投稿者のみに投稿削除ボタンが表示されるようになる。現時点では、削除を行うサーバー側の実装がまだないので、削除ボタンをクリックしても「ページが見つかりません」と表示される。
+
+### 削除処理を作ろう
+削除処理をサーバー上で実装していく。
+
+#### ルーティングの設定
+まずは `lib/router.js` に新しく case 文を追記する。`postsHandker` モジュールと、そのモジュールの `handleDelete` 関数は（後から作るが）実装済みの想定で書いてしまうこと。
+
+```diff
+ case '/posts':
+   postsHandler.handle(req, res);
+   break;
++case '/posts?delete=1':
++  postsHandler.handleDelete(req, res);
++  break;
+ case '/logout':
+   util.handleLogout(req, res);
+   break;
+```
+
+#### 削除処理の実装
+次に、`lib/posts-hander.js` で具体的な削除処理を実装する。
+
+```js
+function handleDelete(req, res) {
+  switch (req.method) {
+    case 'POST':
+      let body = [];
+      req.on('data', (chunk) => {
+        body.push(chunk);
+      }).on('end', () => {
+        body = Buffer.concat(body).toString();
+        const decoded = decodeURIComponent(body);
+        const id = decoded.split('id=')[1];
+        Post.findByPk(id).then((post) => {
+          if (req.user === post.postedBy) {
+            post.destroy().then(() => {
+              handleRedirectPosts(req, res);
+            });
+          }
+        });
+      });
+      break;
+    default:
+      util.handleBadRequest(req, res);
+      break;
+  }
+}
+```
+
+（もちろん、`module.exports = { handle, handleDelete }` とするのも忘れずに） 
+
+**解説**
+
+- `switch (req.method)` の部分は、POST メソッドのときだけ後続の処理が呼ばれるように実装している。
+- `let body = [];` 以降の部分は、`req.on('data', chunk => { body.push(chunk); })` では POST のデータ（＝削除処理の場合は、hidden 指定したフォームからの情報「`id=（投稿のID）`」が来る）を受け取っていて、`on('end', () => {...})` の部分で URI エンコードをデコードして、投稿の ID を取得している。
+- `Post.findByPk(id).then(...)` は sequelize における削除の実装。
+    - まず、`Post.findByPk(id)` の部分で、ID を使って投稿を取得している（Post テーブルの Pk（プライマリーキー）は投稿の ID そのものだから）。
+    - 取得ができたら、`then(...)` の中に渡された無名関数が呼ばれる。その時、取得した投稿内容が post に入る。
+    - `if (req.user === post.postedBy)` で、投稿を行ったユーザー本人が削除を実行しようとしていることをチェック。
+    - 問題なければ、sequelize にビルトインの `destroy` 関数を使って削除し、リダイレクトを行う。
+
+> **Tips: 認証と認可**  
+> &emsp;この実装では、そもそも投稿した本人にしか削除ボタンは表示されないのに、サーバーサイドでも改めて投稿した本人かどうかをチェックしている。
+> &emsp;これは、今の実装のままでは、サーバーに来た HTTP のリクエストが、どのようなクライアントからのリクエストであるか完全に保証することはできないためである。  
+> &emsp;例えば、他の認証ユーザーが悪意を持って、curl などのコマンドラインツールから他人の投稿の削除を試みる可能性がある。
+> &emsp;そのようなリクエストが来た場合に削除が行われないよう、（UI（クライアントサイドに削除ボタンを表示するしないのみならず、）サーバー上でもしっかりチェックを行う必要がある。  
+> &emsp;このように、特定の機能を利用する権限があるかどうかを、認証されたユーザーに対して確認し、資格に応じて許可することを **認可** という。  
+> &emsp;認証と認可は、セキュリティ上きわめて重要な機能となっており、かならずサーバー上でチェックする必要がある。
+
+👉　具体的には、上記のサーバサイドでの if 文による認可処理を書かないと、`curl -X POST http://guest1:1234@localhost:8000/posts?delete=1 -d 'id=10'` のように curl コマンドを叩くことで、guest1 として認証済みでありさえすれば他人（guest1 以外）の投稿も削除できてしまう。  
+認可処理を書けば、この curl コマンドを叩くと if 文で遮断できる。
+
+---
+
+これで `node index.js` としてサーバーを再起動して、自分の投稿を削除できれば削除の実装が完成！
+
+> *✍️ MEMO:* ここで、sequelize@4.33.4 という今までのバージョンだと「`Post.findByPk()` という関数なんてないよ」というエラーが出た。調べたところ、ちょっと前までは `findByPk` のかわりに `findById` という関数が使われていて、今は `findByPk` に置き換わったらしい。  
+ということで、このタイミングで `yarn upgrade sequelize@5` としてバージョンを引き上げた。  
+それに付随して `DeprecationWarning: A boolean value was passed to options.operatorsAliases. This is a no-op with v5 and should be removed.` という warning が出た。演算子エイリアスで false を指定した部分ももういらないっぽい。
+
+> **Tips: 論理削除**  
+> 今回実装した `handleDelete` のように、データベースから実際にデータを削除することを **物理削除** という。  
+> 一方で、実際にデータを削除するかわりに、「削除された」ことを表すフラグを立ててデータが削除されたとみなすことを **論理削除** という。論理削除を使えば、削除したデータを復元することも可能であるため、実用上はこちらを使うことも多い。
+
+## 管理者機能の実装
+削除機能の実装も終わったので、残る機能は管理人機能だけとなった。
+管理人機能として要件に挙がっていたものは、
+
+- 管理人の投稿だとわかる
+- 管理人はすべての投稿を削除できる
+- 管理人はどのアカウントの投稿かわかる
+
+以上の 3 つ。
+
+### 管理人の投稿機能を実装する
+以下では、簡易r人ユーザーの名前を `admin` であるとして実装していく。
+「管理人の投稿だとわかる」機能は、テンプレートを編集するだけで実装できる。
+
+`views/posts.pug` を以下のように編集する。
+
+```diff
+     h2 投稿一覧
+     each post in posts
+-      h3 #{post.id} : ID:#{post.trackingCookie}
++      if (post.postedBy === 'admin')
++        h3 #{post.id} : 管理人 ✅
++      else
++        h3 #{post.id} : ID:#{post.trackingCookie}
+       p #{post.content}
+       p 投稿日時: #{post.createdAt}
+       - var isDeletable = (user === post.postedBy)
+```
+
+<details close>
+<summary>ログアウト画面の Modify</summary>
+今後、管理人とそうでないユーザーでログインし直すことが多くなるため、ログアウトページに `/posts` へのリンクを作ってしまう。
+
+`lib/handler-utils.js` の `handleLogout` 関数を以下のように編集する。
+
+```diff
+ function handleLogout(req, res) {
+   res.writeHead(401, {
+-    'Content-Type': 'text/plain; charset=utf-8',
++    'Content-Type': 'text/html; charset=utf-8'
+   });
+-  res.end('ログアウトしました');
++  res.end('<!DOCTYPE html><html lang="ja"><body>' +
++    '<h1>ログアウトしました</h1>' +
++    '<a href="/posts">ログイン</a>' +
++    '</body></html>'
++  );
+ }
+```
+
+Chrome の一部バージョンでは、真っ白な画面になることがある。その場合は、handleLogout 関数のステータスコードを 401 から 302（一時的にページを転送する）に変更してみる。
+
+</details>
+
+### 管理人の削除機能を実装する
+これは、削除を認可していた実装を修正すればよい。
+テンプレートにおける表示の部分と、実際の削除処理（サーバーサイド）の 2 箇所を修正する。
+
+- `views/posts.pug` は以下のとおり変更
+
+    ```diff
+    -      - const isDeletable = (user === post.postedBy)
+    +      - const isDeletable = (user === post.postedBy || user === 'admin')
+    ```
+
+    削除可能フラグを true にする条件を、本人または管理人のとき、となるように変更した。
+
+- `lib/posts-hander.js` の `handleDelete` 関数を以下のように編集
+
+    ```diff
+    -    if (req.user === post.postedBy) {
+    +    if (req.user === post.postedBy || req.user === 'admin') {
+    ```
+
+    これも同様の変更。
+
+### 投稿したアカウントがわかる機能の実装
+「管理人はどのアカウントによって投稿されたかわかる」機能。これは表示機能なので、テンプレートだけで実装できる。
+
+`views/posts.pug` を以下のように編集する。
+
+```pug
+p 投稿日時:...
+
+// 以下 2 行を追加
+if (user === 'admin')
+    p 投稿者 #{post.postedBy}
+
+const isDeletable = ...
+```
+
+こうすることで、admin でログインしているときは全ての投稿について「投稿者: guest1」「投稿者: admin」などと投稿者が表示され、admin 以外でログインした場合にはその表示はされない。  
+（この機能、若干ピンと来づらいが、それはこれが匿名掲示板だから。近年の SNS 的なものであれば誰にでも投稿ユーザーがわかるようなものが多いはず）
+
+### 微修正（投稿中の改行、スペースの処理）
+
+ここまでの実装だと、投稿に改行を含めても、投稿一覧の表示では改行として表示されない。改行が表示されるように、改行を HTML タグの `<br />` に置換し、テンプレート上で HTML の表示を許可するようにしてみる。
+
+DB から取得した投稿内容の改行は、以下の処理で `<br />` に置換できる。
+
+**lib/posts-handler.js**
+
+```js
+Post.findAll({order: [['id', 'DESC']]}).then(posts => {
+    // 以下の forEach を新たに追加
+    // 改行を表すエスケープシーケンスを br タグに置換
+    posts.forEach(post => {
+        post.content = post.content.replace(/\n/g, '<br />');
+    });
+```
+
+また、pug のテンプレートにおいては `p! = post.content` という記述で、タグをタグと認識し HTML 内に投稿内容を表示できる。こうしないと `<br />` がそのまま文字列として表示されてしまう。
+
+```diff
+-      p #{post.content}
++      p!= post.content
+       p 投稿日時: #{post.createdAt}
+```
+
+また、ここまでの実装では、投稿に半角スペースを加えると `+`（プラスマーク）に変換されていた。 `decodeURIComponent` はプラス文字をデコードしないようだ。デコードする文字列 body について、プラス文字を %20 に置換してからデコードするようにすると解決した。
+
+```js
+const decoded = decodeURIComponent(body.replace(/\+/g, '%20'));
+```
+
+## デザインの改善
+すでに要件としてあがっていた機能を実装し終えた。この回ではデザイン、特に見た目を改善していく。
+
+### favicon を表示させる
+まずはファビコンを表示させてみる。実際のファビコン用の画像としては、`https://raw.githubusercontent.com/progedu/secret-board-3026/master/favicon.ico` を使う（wget で取得する）
+
+<img src='https://raw.githubusercontent.com/progedu/secret-board-3026/master/favicon.ico'>
+
+まずは、 `/favicon.ico` へのリクエストをルーティングするために、`lib/router.js` の `route` 関数を以下のように実装する。
+
+```js
+case '/logout':
+    //...
+// ↓ これを追加
+case '/favicon.ico':
+    util.handleFavicon(req, res);
+    break;
+```
+
+次に、`lib/handler-util.js` を以下のように実装する。
+
+まずは `const fs = require('fs');` として、FileSystem のモジュール `fs` を読み込むこと。
+
+**lib/handler-util.js**
+
+```js
+const handleFavicon = (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'image/vnd.microsoft.icon'
+    });
+    const favicon = fs.readFileSync('./favicon.ico');
+    res.end(favicon);
+}
+```
+
+あとは、この `handleFavicon` 関数を `module.exports` に含めること。
+
+**解説**
+- `'Content-Type': 'image/vnd.microsoft.icon'` の部分は、ファビコンのコンテンツタイプをレスポンスヘッダに書き出している。
+-   ```js
+    const favicon = fs.readFileSync('./favicon.ico');
+    res.end(favicon);
+    ```
+    これは、ファビコンのファイルを Stream として同期的に読み出し、それをそのままレスポンスの内容として書き出している。    
+    ちなみに、`fs` を使う場合は、path は、`fs` を使っているファイル（ここでは `lib/handler-util.js`）からの相対パスではなく、プロジェクトのルートからのパスになる（favicon.ico はプロジェクトのルートディレクトリに配置されている）。
+    > 参考：　`require()` は require を書いているファイルからの相対パスで指定する。
+
+これを実装すると、`/favicon.ico` にアクセスするとファビコンが表示されるし、`/posts` にアクセスすると、タブにファビコンが表示される（されない場合は Command + Shift + R）。
+
+### Bootstrap を使って見た目を改善する
+#### Bootstrap とは？
+Bootstrap は Twitter 社が提供している、どのようなデバイスでページを見ても適切なデザインとなるような HTML、CSS、JavaScript
+を提供する Web ページ作りのための部品集。  
+様々な部品や見せ方に対する HTML の要素の class が用意されている。
+
+このように単一の HTML で PC やタブレット、スマートフォンなど様々なデバイスに合わせた表示ができるデザインのことを **レスポンシブデザイン** という。
+
+今回変更するのは `views/posts.pug` だけとなる。
+
+### Bootstrap の読み込み
+まずは、この Bootstrap の CSS と JavaScript をテンプレートに読み込んでみる。
+
+**`views/posts.pug`**
+
+```diff
+ html(lang="ja")
+   head
+     meta(charset="UTF-8")
++    link(rel="stylesheet",
++    href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css",
++    integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm",
++    crossorigin="anonymous")
+```
+
+これは CSS ファイルを読み込む設定をしている。
+
+次に、body 要素の最後に以下を加える。
+
+```diff
+         form(method="post" action="/posts?delete=1")
+           input(type="hidden" name="id" value="#{post.id}")
+           button(type="submit") 削除
+       hr
++
++    script(src="https://code.jquery.com/jquery-3.4.1.slim.min.js")
++    script(src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js",
++    integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl",
++    crossorigin="anonymous")
+```
+
+ここでは Bootstrap に必要となる JavaScript のソースコードを読み込んでいる。
+
+なお、これらの CSS ファイルや JavaScript ファイルは、Bootstarp がインターネット上で提供しているものを利用している。また、Bootstrap に利用されている jQuery も同じくインターネット上で提供されているものを利用して読み込む。
+
+### デザインの適用
+#### body の左右にマージンを与える
+まず、最初のデザインの適用として、`body` の左右に適切なマージンを与える class 属性を `body` に設定してみる。
+
+```diff
+- body
++ body.container
+```
+
+Pug では、`タグ名.クラス名` と続けることで、タグに class 属性を付与することができる。プレーンな HTML でいえば `<body class="container">` に相当。Pug で `body(class="container")` と書いても同様の変換結果になる。
+
+次は、最初の見出しとログアウトリンクの配置を整える。
+
+```diff
+-    h1 秘密の匿名掲示板
+-    a(href="/logout") ログアウト
++    div.my-3
++      h1 秘密の匿名掲示板
++      a(href="/logout") ログアウト
+```
+`div` 要素を加えた。`div` 要素の `my-3` というクラスは、余白設定用のクラス。`my-3` の場合、縦方向（`y` 軸方向）への余白（`margin`）を、5 段階用意されているうちの 3 段階目の値に指定するもの。
+
+#### ログアウトリンクをボタンにして右側に配置
+今度は、ログアウトリンクをボタンに変更し、右側に配置する。
+
+```diff
+   body.container
+     div.my-3
++      a(href="/logout").btn.btn-info.float-right ログアウト
+       h1 秘密の匿名掲示板
+-      a(href="/logout") ログアウト
+```
+
+`a` タグにボタンのデザインを適用するクラス `btn` `btn-info`、さらに右側に配置するクラス `float-right` を設定し、`h1` 要素の上に配置する。
+
+Pug では `タグ名.クラス名1.クラス名2.クラス名3` のように書くことで複数のクラスを設定できる。プレーンな HTML で今回の a タグを書くと `<a href="/logout" class="btn btn-info float-right">ログアウト</a>` になる。
+
+#### 投稿フォームのデザインを変更
+
+```diff
+     h2 新規投稿
+     form(method="post" action="/posts")
+-      div
+-        textarea(name="content" cols=40 rows=4)
+-      div
+-        button(type="submit") 投稿
++      div.form-group
++        textarea(name="content" rows="4").form-control
++      div.form-group
++        button(type="submit").btn.btn-primary 投稿
+```
+
+#### 投稿一覧の見た目を変える
+今度は、投稿一覧を [Card](https://getbootstrap.com/docs/4.0/components/card/) という部品を使って表示する。
+
+<detals close>
+<summary>views/posts.pug</summary>
+
+```diff
+     h2 投稿一覧
+     each post in posts
+-      - var isPostedByAdmin = (post.postedBy === 'admin')
+-      if isPostedByAdmin
+-        h3 #{post.id} : 管理人 ★
+-      else
+-        h3 #{post.id} : ID:#{post.trackingCookie}
+-      p!= post.content
+-      p 投稿日時: #{post.createdAt}
+-      - var isAdmin = (user === 'admin')
+-      if isAdmin
+-        p 投稿者: #{post.postedBy}
+-      - var isDeletable = (user === post.postedBy || isAdmin)
+-      if isDeletable
+-        form(method="post" action="/posts?delete=1")
+-          input(type="hidden" name="id" value="#{post.id}")
+-          button(type="submit") 削除
+-      hr
++      div.card.my-3
++        div.card-header
++          - var isPostedByAdmin = (post.postedBy === 'admin')
++          if isPostedByAdmin
++            span #{post.id} : 管理人 ★
++          else
++            span #{post.id} : ID:#{post.trackingCookie}
++        div.card-body
++          p.card-text!=post.content
++        div.card-footer
++          div 投稿日時: #{post.createdAt}
++          - var isAdmin = (user === 'admin')
++          if isAdmin
++            div 投稿者: #{post.postedBy}
++          - var isDeletable = (user === post.postedBy || isAdmin)
++          if isDeletable
++            form(method="post" action="/posts?delete=1")
++              input(type="hidden" name="id" value=post.id)
++              button(type="submit").btn.btn-danger.float-right 削除
+
+      script(src="https://code.jquery.com/jquery-3.4.1.slim.min.js")
+      script(src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js",
+      integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl",
+      crossorigin="anonymous")
+```
+
+**解説**
+- `div.card.my-3` : Card の要素
+- `div.card-header` : ここからが Card の小要素となる。これは Card のヘッダ（`card-header`）。`div` 要素を二階層（`div.card` と `div.card-header`）追加し、管理人または ID が表示されるエリアを `h3` 要素から `span` 要素に変更した（こういう細かいところを落とすとコンソールにごちゃごちゃ警告が出たりする）。
+- `div.card-body` が Card の中身。  
+`p.card-text!=post.content` と書くことで、`post.content` というコードを `card-text` というクラスが設定された `p` 要素の中に入れる。
+- 無論だが、ここで登場する `post.id` や `post.content` はデータベースから取得したデータを示しており、`タグ名.クラス名` とはまったくの別物（それはそう）。
+- `div.card-footer` はカードのフッタになる部分。投稿日時と投稿者を `p` 要素から `div` 要素に変更し、`button` に対して `btn-danger` という危険なボタン（削除）であることを示すデザインの class を適用して右に配置。
+
+</detail>
+
+ここまでで機能、デザインがすべて完成した。ただし、まだこの Web サービスにはセキュリティ上の問題が多い。  
+次のセクションからは、セキュリティ対策を施していく。
+
+### 時刻表示について
+現時点では、投稿日時は `投稿日時: Thu Apr 30 2020 15:16:06 GMT+0900 (Japan Standard Time)` というような形で表示されている。
+
+`yarn add moment-timezone@0.5.0` して Moment Timezone というライブラリをインストールする。
+
+そして、このライブラリを使用するために以下のようにする。
+
+**lib/posts-handler.js**
+```js
+const moment = require('moment-timezone');
+```
+
+```diff
+ Post.findAll({ order: [['id', 'DESC']] }).then((posts) => {
+   posts.forEach((post) => {
+     post.content = post.content.replace(/\n/g, '<br>');
++    post.formattedCreatedAt = moment(post.createdAt).tz('Asia/Tokyo').format('YYYY年MM月DD日 HH時mm分ss秒');
+   });
+```
+
+この実装で、投稿のオブジェクトに `formattedCreatedAt` というフォーマットされた投稿日の属性を用意することができる。
+
+あとは pug テンプレートから、この `formattedCreatedAt` を利用すれば表示に反映できる。
+
+```diff
+- div 投稿日時: #{post.createdAt}
++ div 投稿日時: #{post.formattedCreatedAt}
+```
