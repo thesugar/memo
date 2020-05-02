@@ -711,3 +711,659 @@ tracking_id を除去して `document.cookie = 'tracking_id=***_****'` と他人
 
 > 所見：以上の対策の肝は、ユーザー名（guest1とか）を組み合わせたハッシュ値を利用する（ユーザー名を組み合わせたハッシュ値を利用しているということは知られないようにしながら）、ということにある（はず）。今回のやり方もおもしろいけど、ユーザー名を利用するのであれば、ユーザー名と ID の組み合わせを DB に持っておいてそこで付き合わせて認可するのも手？（ただこの掲示板の場合毎日 ID が変わる仕様だし、負荷大きくなるか。。）
 
+## より堅牢なセッション管理
+ここまでで、とりあえずのセッション固定化攻撃脆弱性の対応を行った。
+
+具体的なセッションを表す識別子であるトラッキング ID を、「元々の ID」と「元々の ID とユーザー名を結合した文字列から作成したハッシュ値」の 2 つで構成することで、トラッキング ID をクライアント側で生成（偽装）して乗っ取りを行うことを防ぐ、という方法を取った。
+
+しかしこの方法では、文字列の結合のしかたやハッシュアルゴリズムが推測されてしまうことで、ハッシュ値を計算可能なのである。
+
+ハッシュ値が計算可能ということは、各自でトラッキング ID を生成してセッションの乗っ取りができてしまう。そこで、今回はより堅牢なトラッキング ID を生成する方法を実装する。
+
+### tracking_id のハッシュ値を推測してなりすましてみよう
+まずは、秘密の匿名掲示板に guest1 でログインして適当に投稿する。  
+すると、ID として `ID: 5059256563950591` のように番号が表示される。
+
+では、ここで、Node.js の REPL を起動して、
+
+```js
+const crypto = require('crypto');
+const sha1sum = crypto.createHash('sha1');
+sha1sum.update('5059256563950591' + 'guest2'); // ここは guest1 でなく guest2 で計算する
+sha1sum.digest('hex');
+```
+
+以上のように実行してハッシュ値を求めてみる。これは、「SHA1 アルゴリズムを利用し、ユーザー ID を後ろに結合してハッシュ値を求める」という方法が試行錯誤のすえに推測された、というイメージでこの計算をしている。
+
+こうすると、`cceae5036ac397d48240b8e434935defd09980bc` のようなハッシュ値が表示されるので、先ほど表示された ID と今計算したハッシュ値を `_` で結合して `1784335553602311_cceae5036ac397d48240b8e434935defd09980bc` のような文字列を用意する。
+
+用意できたら、この値をトラッキング ID として　Cookie にセットし、送ってみる。
+`guest2` でログインして、デベロッパーツールの Application から Cookies の http://localhost:8000 を Clear して、Console タブで `document.cookie ='tracking_id=1784335553602311_cceae5036ac397d48240b8e434935defd09980bc';` のようにセットする。
+
+そうして書き込むと、「ID:1784335553602311」というように表示され、`guest2` でログインしているにもかかわらず、`guest1` ユーザーが書き込んだときの ID に偽装して書きこめてしまう。
+
+上記方法は、『<「表示されているID + （ログインしている）ユーザー名」をハッシュ化した値>を認可に使っている』という情報がバレればできてしまう方法である。ログインしているユーザー名をくっつければいいので、guest2 が guest1 になりすますときも、guest1 というユーザー名自体は知る必要がなく、<「（guest1 が行った書き込みに表示されている ID）+（ログインしているユーザー名=）guest2」をハッシュ化した値>を渡せば認可が通ってしまう。  
+（それゆえ、サーバーの管理者には、なりすましが行われていることは調査でわかる）
+
+### セッションの乗っ取りを防ぐ
+この脆弱性を回避するには、ゆーざーめい　に加えて秘密の鍵となる文字列を結合するという方法がある。この方法を使うと、秘密の鍵の文字列がばれないかぎりは、ハッシュ値を再現することが難しくなる。
+
+`lib/posts-handler.js` を以下のように実装する。
+
+<details close>
+<summary>lib/posts-handler.js</summary>
+
+```diff
++const secretKey =
++  '5a69bb55532235125986a0df24aca759f69bae045c7a66d6e2bc4652e3efb43da4' +
++  'd1256ca5ac705b9cf0eb2c6abb4adb78cba82f20596985c5216647ec218e84905a' +
++  '9f668a6d3090653b3be84d46a7a4578194764d8306541c0411cb23fbdbd611b5e0' +
++  'cd8fca86980a91d68dc05a3ac5fb52f16b33a6f3260c5a5eb88ffaee07774fe2c0' +
++  '825c42fbba7c909e937a9f947d90ded280bb18f5b43659d6fa0521dbc72ecc9b4b' +
++  'a7d958360c810dbd94bbfcfd80d0966e90906df302a870cdbffe655145cc4155a2' +
++  '0d0d019b67899a912e0892630c0386829aa2c1f1237bf4f63d73711117410c2fc5' +
++  '0c1472e87ecd6844d0805cd97c0ea8bbfbda507293beebc5d9';
++
+ function createValidHash(originalId, userName) {
+   const sha1sum = crypto.createHash('sha1');
+-  sha1sum.update(originalId + userName);
++  sha1sum.update(originalId + userName + secretKey);
+   return sha1sum.digest('hex');
+ }
+```
+
+- `const secretKey=` の部分は、秘密鍵となる文字列を宣言している。ここで宣言した文字列は推測の難しい長い文字列であるため、この文字列が外部に漏れないかぎりは簡単にはハッシュ値を計算することはできない。
+- この文字列のデータは
+
+  ```js
+  require('crypto').randomBytes(256).toString('hex');
+  ```
+  を実行して得られたもの。`crypto` モジュールの randomBytes 関数は、推測されづらいランダムなバイト列を生成することができる。  
+  `toString` 関数を引数 `hex` という文字列で実行することで、16　進数で表されたランダムなバイト列を文字列として得ることができる。
+- `sha1sum.update(originalId + userName + secretKey)` では、SHA1 のハッシュ値を計算する際に、この秘密鍵を最後に結合して計算するようにしている。
+</details close>
+
+これでずいぶん安全な方法となり、先ほどと同じ方法ではセッション乗っ取りができなくなった。
+
+上記では秘密の文字列をファイルに直書きしたが、この文字列はバレるといけないので、実際には環境変数に入れるなどして、厳重に管理すべき。
+
+このようなセッションの脆弱性に対応するための一番簡単な方法は、安全なセッション管理を提供している Web のフレームワークを利用するというものがある。そうすることで、このような工夫を自前で行わなくても安全にセッションを利用できる。
+
+しかし、要件によってはセッションの仕組みを自分でいじる必要があることもあり、そうした場合には
+
+1. セッションの識別子を推測されにくいものにする
+    - 今回の対応はすべてこれ
+1. セッションの識別子を URL のパラメーターに入れない
+    - ブラウザには、Referer というヘッダの情報に、どの URL からリンクをたどってきたかを通知する機能があるが、そこから他人に自分のセッション識別子が流出してしまうことを防ぐのに重要。
+1. HTTPS 通信で利用する Cookie には secure 属性を設定する
+    - Cookie の利用を HTTPS 通信の時のみに限定するもの。通信の経路の盗聴によってセッションの識別子が盗まれることを防ぐことができる。
+1. ログインが成功したら新しいセッションの識別子を発行する
+    - 今回の掲示板では、1 日の間であれば、ログアウトして再ログインした場合でもユーザーを識別できるようにするという要件があるため対策を行わなかったが、この実装をすることで、セッションの固定化攻撃に対して抜本的な対策を施すことができる。
+
+以上の 4 つが重要。
+
+> おまけ:  
+> 現在の実装では、元々のトラッキング ID が推測可能なランダム関数を利用して作られている。`Math.random` 関数は、アルゴリズムとして推測が行いやすいランダム値である。
+>
+> これを以下のように変更する。
+> ```diff
+> -    const originalId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+> +    const originalId = parseInt(crypto.randomBytes(8).toString('hex'), 16);
+> ```
+> こうすることで、推測されにくい 8 バイトの整数値を得ることができる。  
+> ※ただし JavaScript の整数値の最大値は、2 の 53 乗 - 1 であり、保持できる精度にも限りがあるためここで得られる数値は 4738441943151179000 のように下三桁から四桁が 000 や 0000 という値に丸められる。
+
+## CSRF 脆弱性の対策
+### CSRF 脆弱性とは
+CSRF 脆弱性とは、クロスサイト・リクエストフォージェリ脆弱性の略称であり、「シーサーフ」脆弱性と読む。  
+ログイン機能の中には、認証の状態を持ち続けたり、セッションを Cookie の内容で持ち続けたりするものがある。  
+CSRF 脆弱性はその特性を利用して、偽サイトを通じて外部のサイトからリクエストを送ることで、重要な処理を誤って起こさせる脆弱性である。
+
+### CSRF 脆弱性を攻撃してみよう
+秘密の掲示板の CSRF 脆弱性を突くための外部サイトを作成してみる。ここでは、簡単にただの HTML フォームとする。
+
+```bash
+cd ~/workspace
+mkdir csrf-study; cd csrf-study; touch index.html
+```
+
+次に、`csrf-study` フォルダに以下の `index.html` を作成する。
+
+<details close>
+<summary> index.html </summary>
+
+```html
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>偽物の投稿フォーム</title>
+</head>
+
+<body>
+<h1>ブラウザの挙動テスト</h1>
+<form method="post" action="http://localhost:8000/posts">
+  <input type="hidden" name="content" value="まんまと罠にかかりましたね">
+  <button type="submit">ボタンを押してみてください</button>
+</form>
+
+</body>
+
+</html>
+```
+
+</details>
+
+ここまでできたら、CSRF 攻撃を体験してみる。
+
+まずは、秘密の匿名掲示板の HTTP サーバーを起動して、`guest1` でログインしておく。
+
+次に、いま作った外部サイトの `index.html` を Chrome で開いてみる。知り合いから送られてきた URL を開いたらこのページが表示されたという想定にしよう。
+
+> 秘密の匿名掲示板の開発などを docker で行っている場合などでも、ここで作る index.html はホスト OS に作ってしまってよい（docker で、秘密の掲示板とは別のディレクトリに index.html を作るとポートフォワードとかが面倒と思われる）
+
+
+<img src="https://cdn.fccc.info/oWxa/soroban/d42deb7eecbd96e3e07e35ae314cce83/soroban-guide-2839/5f3bbe6f-private.png?Expires=1588428124&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjgzOS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg0MjgxMjR9fX1dfQ__&Signature=eZp1UjIl1crJc4pGotjaBnxfa9qM5wgqtTCxvTEYx3hs6-XX3SR5pmHgJcQ9nSDXzjw7Gm147qSr7Ed06fIM3Q7H9x1Qu8Iy5ILjVzs0CK2zUo8qeGvtmBFCt~KQyOTPqf2Oz4fGcgMfSoy3EklpBH-hT6b4Sl5FRiGn7bB0-mB7Hb7RKAjbUTMP~vWik6J-CX32CU9ykAze8L1YL~c1VM-GqjSs-tXojhwRT2SwyglhPg-MOuUuzW7rWp-jqxyYc~oaIsJYJ1-xr0xqK~kK~aTEKDP1vlAE6YQ7~JV4nWjiUz3fXsTrXy8ZpjkfWs75~XN4iwAmg96IVXSmgg0q8Q__">
+
+「ボタンを押してみてください」と書いてあるのでこのボタンを押してみる。そうすると、投稿したつもりはないのに、勝手に「まんまと罠にかかりましたね」という内容で秘密の匿名掲示板に投稿されてしまう。
+
+<img src="https://cdn.fccc.info/P9XS/soroban/4cb9fc0e08e5c7aabd3e95c00f864457/soroban-guide-2839/e9203742-private.png?Expires=1588428124&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjgzOS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg0MjgxMjR9fX1dfQ__&Signature=eZp1UjIl1crJc4pGotjaBnxfa9qM5wgqtTCxvTEYx3hs6-XX3SR5pmHgJcQ9nSDXzjw7Gm147qSr7Ed06fIM3Q7H9x1Qu8Iy5ILjVzs0CK2zUo8qeGvtmBFCt~KQyOTPqf2Oz4fGcgMfSoy3EklpBH-hT6b4Sl5FRiGn7bB0-mB7Hb7RKAjbUTMP~vWik6J-CX32CU9ykAze8L1YL~c1VM-GqjSs-tXojhwRT2SwyglhPg-MOuUuzW7rWp-jqxyYc~oaIsJYJ1-xr0xqK~kK~aTEKDP1vlAE6YQ7~JV4nWjiUz3fXsTrXy8ZpjkfWs75~XN4iwAmg96IVXSmgg0q8Q__">
+
+上記で作成した HTML は、
+
+```html
+<h1>ブラウザの挙動テスト</h1>
+<form method="post" action="http://localhost:8000/posts">
+  <input type="hidden" name="content" value="まんまと罠にかかりましたね">
+  <button type="submit">ボタンを押してみてください</button>
+</form>
+```
+
+ここの部分でフォームが作られており、http://localhost:8000/posts に POST メソッドで input タグの hidden を利用して投稿内容「まんまと罠にかかりましたね」が値として埋め込まれ、ボタンのクリックによってその内容が送られるようになっている。  
+なお、掲示板には別ウインドウでログイン済みであるため、この偽サイトや偽フォームで暗証を突破する必要はない。
+
+この CSRF 攻撃の具体的な被害としては
+
+- 利用者のアカウントで指定しない物品の購入
+- 退会処理
+- 掲示板への書き込み
+- パスワードや登録メールアドレスの変更
+
+これらが勝手に処理されて、莫大な被害が生じるおそれがある。
+
+----
+この CSRF 脆弱性への対処方法としては
+
+1. 一度しか利用できないトークンを投稿フォームに埋め込み、そのトークンを消費する形で投稿させる
+1. 処理を実施する前にさらに ID とパスワードで認証させる
+1. リクエストヘッダのリファラ（Referer）を確認してチェックする
+
+以上 3 種類の方法がある。
+
+Web サービスにおいては、一番目の方式による対応が一般的。このトークンのことを、**ワンタイムトークン** や **CSRF トークン** と呼ぶこともある。  
+なぜ一度しか利用できないトークンを利用する？　→　同じトークンの文字列が何度でもリクエストに使える場合、そのトークンが流出した場合に CSRF 攻撃に使われる場合があるから。
+
+ワンタイムトークンという一度しか利用できないトークンであれば、「トークンが発行されてから使用するまで」の間に外部にばれないかぎりは、勝手にリクエストが処理されることがなくなる。
+
+なお、二番目と三番目の方法には以下のようなデメリットがあるため、あまり一般的に用いられない。
+
+- 二番目の ID とパスワードを再度入力させる方法対策では、利用者の利便性を損なうおそれがある
+- 三番目のリファラを確認する方法は、XSS により同一サイト内で HTML が改竄された場合には攻撃に対して無防備になる
+
+### ワンタイムトークンを実装してみる
+<details close>
+<summary>lib/posts-handler.js を以下の変更差分のように編集する</summary>
+
+```diff
+ const Post = require('./post');
+
+ const trackingIdKey = 'tracking_id';
+
++const oneTimeTokenMap = new Map(); // キーをユーザー名、値をトークンとする連想配列
++
+ function handle(req, res) {
+   const cookies = new Cookies(req, res);
+   const trackingId = addTrackingCookie(cookies, req.user);
+```
+
+これは、ワンタイムトークンをサーバ上に保存しておくための連想配列の宣言。
+
+```diff
+       post.content = post.content.replace(/\+/g, ' ');
+       post.formattedCreatedAt = moment(post.createdAt).tz('Asia/Tokyo').format('YYYY年MM月DD日 HH時mm分ss秒');
+     });
++    const oneTimeToken = crypto.randomBytes(8).toString('hex');
++    oneTimeTokenMap.set(req.user, oneTimeToken);
+     res.end(pug.renderFile('./views/posts.pug', {
+       posts: posts,
+-      user: req.user
++      user: req.user,
++      oneTimeToken: oneTimeToken
+     }));
+     console.info(
+       `閲覧されました: user: ${req.user}, ` +
+```
+
+↑ は、HTTP の GET メソッドで、フォームをテンプレートで表示させる部分に記述する（`case 'GET':` の中）。  
+`const oneTimeToken = crypto.randomBytes(8).toString('hex');` は、`crypto` モジュールの `randomBytes` を利用して、推測されにくいランダムなバイト列を作成し、それを 16 進数にした文字列を取得している。これがトークンになる。
+
+その後、ユーザー名をキーとして連想配列（Map)にこのトークンを保存（set）する。
+さらにテンプレート（pug）に `oneTimeToken` というプロパティ名で、トークン文字列を利用できるように渡している。
+
+```diff
+   case 'POST':
+     let body = [];
+   　req.on('data', (chunk) => {
+       body.push(chunk);
+     }).on('end', () => {
+       body = Buffer.concat(body).toString();
+       const decoded = decodeURIComponent(body);
+-      const content = decoded.split('content=')[1];
+-      console.info('投稿されました: ' + content);
+-      Post.create({
+-        content: content,
+-        trackingCookie: trackingId,
+-        postedBy: req.user
+-      }).then(() => {
+-        handleRedirectPosts(req, res);
+-      });
++      const dataArray = decoded.split('&');
++      const content = dataArray[0] ? dataArray[0].split('content=')[1] : '';
++      const requestedOneTimeToken = dataArray[1] ? dataArray[1].split('oneTimeToken=')[1] : '';
++      if (oneTimeTokenMap.get(req.user) === requestedOneTimeToken) {
++        console.info('投稿されました: ' + content);
++        Post.create({
++          content: content,
++          trackingCookie: trackingId,
++          postedBy: req.user
++        }).then(() => {
++          oneTimeTokenMap.delete(req.user);
++          handleRedirectPosts(req, res);
++        });
++      } else {
++        util.handleBadRequest(req, res);
++      }
+     });
+     break;
+   default:
+```
+
+以上は POST メソッドで投稿を受け付ける実装。  
+decoded の中身は `content=投稿内容&oneTimeToken=トークン本体` のようになっている。  
+受け取ったデータを `&` で分割した後、投稿内容とリクエストで送られたワンタイムトークンを取得している。また、投稿内容がない場合やワンタイムトークンがない場合には、空文字列を利用するようにしている。
+
+`if (oneTimeTOkenMap.get(req.user) === requestedOneTimeToken)` の部分は、連想配列に格納されているワンタイムトークンと、クライアントからのリクエストに含まれるワンタイムトークンを照合して、それらが一致する場合のみ投稿を DB に保存する処理を行っている。
+
+投稿が成功した後に、連想配列 `oneTimeTokenMap` の `delete` 関数を利用して、利用済みのトークンを連想配列から除去する。
+
+また、トークンが正しくない場合には 400 - Bad Request を返す。
+</details>
+
+次に、このワンタイムトークンをフォームの中に hidden タイプの input 要素として埋め込む。
+
+<details close>
+<summary>views/posts.pug を以下のように変更する。</summary>
+
+```diff
+     form(method="post" action="/posts")
+       div.form-group
+         textarea(name="content" rows="4").form-control
++        input(type="hidden" name="oneTimeToken" value=oneTimeToken)
+       div.form-group
+         button(type="submit").btn.btn-info.float-right 投稿
+       div.row
+```
+</details>
+
+これでワンタイムトークンが埋め込まれる。
+
+また、`lib/hander-util.js` の `handleBadRequest` 関数内で、クライアントにレスポンスする文言も以下のとおり修正する。
+
+```diff
+-   res.end('未対応のメソッドです');
++   res.end('未対応のリクエストです');
+```
+
+以上で、CSRF 脆弱性の対策は完了。  
+`node index.js` で再度、秘密の匿名掲示板のサーバを起動してログイン。
+
+そして、Chrome で新規投稿の下にあるテキストエリアで右クリックし「検証」メニューを選択すると
+
+```html
+<textarea name="content" rows="4" class="form-control"></textarea>
+<input type="hidden" name="oneTimeToken" value="4e48f39ffea3b1ef">
+```
+
+のように書かれた要素がデベロッパーツールの Elements タブに表示されるはず。ちゃんとワンタイムトークンが input 要素に含まれていれば成功。
+
+実際に投稿できることを確かめておこう。そして、投稿が終わるとワンタイムトークンの値も変わっているはず（Elements タブを再度確認するとわかる）。  
+GET リクエストがあったらワンタイムトークンを生成するロジックなので、投稿しなくてもブラウザをリロードすればそのたびにワンタイムトークンは新しくなる。  
+また、当然ながら、デベロッパーツールでワンタイムトークンの値を手打ちで別の値に書き換えたりするともちろん投稿できない（「未対応のリクエストです」と表示される）。
+
+ここで、最初に作った `csrf-study` フォルダの `index.html` を再度 Chrome で開き、「ボタンを押してみてください」ボタンを押してみる。そうすると「未対応のリクエストです」と表示されて、「まんまと罠にかかりましたね」という内容が投稿されなければ成功である。
+
+
+#### おまけ
+現在の実装では、新規投稿の CSRF 対策はできたが、削除処理の CSRF 対応ができていないのでそこも潰しておく。
+
+以下のようにすればよい。
+
+<details close>
+<summary>
+lib/posts-handler.js
+</summary>
+
+```diff
+ function handleDelete(req, res) {
+   case 'POST':
+     let body = [];
+     req.on('data', (chunk) => {
+       body.push(chunk);
+     }).on('end', () => {
+       body = Buffer.concat(body).toString();
+       const decoded = decodeURIComponent(body);
+-      const id = decoded.split('id=')[1];
+-      Post.findByPk(id).then((post) => {
+-        if (req.user === post.postedBy || req.user === 'admin') {
+-          post.destroy().then(() => {
+-            console.info(
+-              `削除されました: user: ${req.user}, ` +
+-              `remoteAddress: ${req.connection.remoteAddress}, ` +
+-              `userAgent: ${req.headers['user-agent']} `
+-            );
+-            handleRedirectPosts(req, res);
+-          });
+-        }
+-      });
++      const dataArray = decoded.split('&');
++      const id = dataArray[0] ? dataArray[0].split('id=')[1] : '';
++      const requestedOneTimeToken = dataArray[1] ? dataArray[1].split('oneTimeToken=')[1] : '';
++      if (oneTimeTokenMap.get(req.user) === requestedOneTimeToken) {
++        Post.findByPk(id).then((post) => {
++          if (req.user === post.postedBy || req.user === 'admin') {
++            post.destroy().then(() => {
++              console.info(
++                `削除されました: user: ${req.user}, ` +
++                `remoteAddress: ${req.connection.remoteAddress}, ` +
++                `userAgent: ${req.headers['user-agent']} `
++              );
++              oneTimeTokenMap.delete(req.user);
++              handleRedirectPosts(req, res);
++            });
++          } 
++        });
++      } else {
++        util.handleBadRequest(req, res);
++      }
+     });
+     break;
+   default:
+```
+
+ワンタイムトークンは、投稿用に使ったトークンを使いまわしている（投稿用と削除用のワンタイムトークンが同じだからといって、（分けたところでトークン生成ロジックは同じようなものを使うんだし）それで弱くなることはない）。
+
+ページに GET 要求があった時点でトークンが発行され、連想配列（`oneTimeTokenMap`）への set もなされているのだから、削除の認可においては、（新たにユーザーごとにトークンを生成して連想配列に登録するみたいなことはせずに）ただちに `if (oneTimeTokenMap.get(req.user) === requestedOneTimeToken) ` で条件判定してよい。
+</details>
+
+<details close>
+<summary>views/posts.pug</summary>
+
+posts.pug に以下のように追記して、削除フォームにもワンタイムトークンを含めるようにする。
+
+```diff
+ if isDeletable
+   form(method="post" action="/posts?delete=1")
+     input(type="hidden" name="id" value=post.id)
++    input(type="hidden" name="oneTimeToken" value=oneTimeToken)
+     button(type="submit").btn.btn-danger.float-right 削除
+```
+</details>
+
+なお、攻撃をテストするページは、index.html を以下のように編集する。
+
+<details close>
+<summary>
+index.html
+</summary>
+
+```html
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>偽物の削除フォーム</title>
+</head>
+
+<body>
+<h1>ブラウザの挙動テスト</h1>
+<form method="post" action="http://localhost:8000/posts?delete=1">
+  <input type="hidden" name="id" value="1"></input>
+  <button type="submit">ボタンを押してみてください</button>
+</form>
+
+</body>
+
+</html>
+```
+
+削除に使う投稿 ID は、自分で行った投稿の ID を入力するようにする。
+上のコードでは、`value="1"` と、 1 が指定されている。
+</details>
+
+以上で、大きな脆弱性への対応はすべて完了。
+やっとこれで Web サービスをインターネット上に公開することができる。
+
+## Heroku への安全な公開
+ここまでで、秘密の匿名掲示板で対策した脆弱性は以下の 4 つ。
+
+- XSS 脆弱性
+- パスワード管理の脆弱性
+- セッション固定化攻撃脆弱性
+- CSRF 脆弱性
+
+現状の対策でも十分に安全性があると言えるが、とはいえ、今回まったく対応しなかったものもある。例えば以下のようなものがある。
+
+|脆弱性|影響|内容|
+|--|--|--|
+|DoS 攻撃脆弱性|大|特定のコンピュータからの大量の接続要求で停止してしまう|
+|ディレクトリ・とらバー申脆弱性|大|任意のファイルを閲覧、操作できてしまう|
+|ヘッダインジェクション脆弱性|大|偽ページの表示などができてしまう|
+|クリックジャッキング脆弱性|小|利用者の意図しないクリックを誘発する|
+
+ここまでで紹介しなかった部分にも様々な脆弱性が存在する可能性があり、また、ライブラリやプログラミング言語、プラットフォームなどに脆弱性が発見されることもある。Web サービスを公開するということは、日々変化するセキュリティ事情につねに対応していくものなのである。
+
+### 秘密の匿名掲示板を Heroku に公開しよう
+今まで書いてきたコードを、Heroku で動かせるように修正していく。  
+まずは、Heroku で動かすために必要なファイル `Procfile` を作成する。
+
+```bash
+echo "web: node index.js" > Procfile
+```
+
+こうして作った Procfile は、Web アプリケーションの起動コマンドが記述してあるファイルである。
+
+次に `app.json` という、Heroku 上でのアプリケーションの情報を記述した設定ファイルを作成する。以下の内容を記述すること。
+
+**app.json**
+
+```json
+{
+  "name": "secret-board",
+  "description": "秘密の匿名掲示板",
+  "repository": "https://github.com/progedu/secret-board-3033",
+  "logo": "",
+  "keywords": ["node"],
+  "image": "heroku/nodejs"
+}
+```
+
+次に、`package.json` を以下のように編集する（これはただ、Node.js のバージョンを指定しているだけ）。
+
+```diff
+     "pg": "^7.4.1",
+     "pg-hstore": "^2.3.2",
+     "sequelize": "^4.33.4"
++  },
++  "engines": {
++    "node": "~10"
+   }
+ }
+```
+
+他に設定すべきことは、WEb サーバーの起動時のポートとデータベースの URL。
+
+まずはポートの設定。`index.js` を以下の変更差分のように編集する。
+
+```diff
+-const port = 8000;
++const port = process.env.PORT || 8000;
+ server.listen(port, () => {
+   console.info('Listening on ' + port);
+ });
+```
+
+開発時は 8000 番ポートだったが、Heroku で起動する際は Heroku の環境変数が指定するポートを利用する。
+
+次にデータベースの URL。  
+`lib/post.js` を以下のように編集する。
+
+```diff
+ const Sequelize = require('sequelize');
+ const sequelize = new Sequelize(
+-  'postgres://postgres:postgres@localhost/secret_board',
++  process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost/secret_board',
+  {
+      logging: false,
+      operatorsAliases: false
+  });
+```
+
+これも、データベースを heroku が用意した（= Herokuの環境変数が指定する）URL を利用する設定としている。
+
+ここまで完了したら Heroku にデプロイするために Git リポジトリにコミットする。
+
+```bash
+git add .
+# 以下で、「インデックスに含まれ、これからコミットされる予定のデータ」と「現在の repo にコミットされているデータ」との差分を表示できる
+# git diff --chached
+git commit -m "Herokuで実行させるための対応"
+```
+
+ここからは、Heroku コマンドでサーバやデータベースの作成を行う。
+
+```bash
+heroku login -i
+```
+
+以上のコマンドの後にメールアドレスとパスワードを入力して Heroku にログインする。
+
+```bash
+heroku create
+```
+
+次は以上のコマンドで、Heroku のサーバを作成する。  
+
+```
+Creating app... done, xxxxx-xxxxx-XXXXX
+https://xxxxx-xxxxx-XXXXX.herokuapp.com/ | https://git.heroku.com/xxxxx-xxxxx-XXXXX.git
+```
+
+作成が完了すると、最後にこのように作成したサーバーの URL が表示されるのでそれを控えておくこと。
+
+次は、Heroku で利用する PostgreSQL のデータベースを作成する。
+
+```bash
+heroku addons:create heroku-postgresql:hobby-dev
+```
+
+以上のコマンドで、Heroku 上に開発用の簡易的な PostgreSQL のデータベースを作成できる。
+
+```
+Creating heroku-postgresql:hobby-dev on xxxxx-xxxxx-XXXXX... free
+Database has been created and is available
+ ! This database is empty. If upgrading, you can transfer
+ ! data from another database with pg:copy
+Created postgresql-xxxxx-XXXXX as DATABASE_URL
+Use heroku addons:docs heroku-postgresql to view documentation
+```
+
+このように表示されれば DB の作成は完了となる。
+
+それでは、git push コマンドで Heroku にデプロイしてみよう。
+
+```bash
+# master-2019 がローカルの branch 名（という想定）で、master がリモート（Heroku 側）の branch 名
+git push heroku master-2019:master
+```
+
+以上を実行して、最後の行で、
+
+```
+remote: Verifying deploy... done.
+```
+
+と表示されればデプロイ成功！
+
+最後に一つだけ対策を追加する。  
+Heroku を使うと、Node.js の Web アプリケーションで HTTPS の暗号化通信も行えるのだが、今の実装だとただの HTTP の、平文での通信も行えてしまう。
+
+先ほどメモした URL に `/posts` を足し、`https` を `http` にしたもの、つまり以下のような URL にアクセスし、`http` でもアクセスできてしまうことを確かめよう。
+
+```
+http://xxxxx-xxxxx-XXXXX.herokuapp.com/posts
+```
+
+この秘密の掲示板で利用している Basic 認証には、暗号化されていない HTTP 通信では、通信経路からユーザー名とパスワードが流出してしまうおそれがあるのだった。
+
+そのようなトラブルを起こさぬよう、HTTP でのアクセスを禁止してしまおう。
+
+`lib/router.js` を以下の変更差分のように変更する。
+
+<details close>
+<summary>lib/router.js</summary>
+
+```diff
+ const postsHandler = require('./posts-handler');
+ const util = require('./handler-util');
+
+ function route(req, res) {
++  if (process.env.DATABASE_URL
++    && req.headers['x-forwarded-proto'] === 'http') {
++    util.handleNotFound(req, res);
++  }
+   switch (req.url) {
+     case '/posts':
+       postsHandler.handle(req, res);
+```
+
+追加した if 文の条件は、`process.env.DATABASE_URL` という環境変数がある場合、つまり本番の DB が存在している Heroku 環境であり、かつ、`x-forwarderd-proto` というヘッダの値が `http` であるときのみ true となる条件になっている。
+
+`x-forwarded-proto` ヘッダには、Heroku が Node.js のアプリケーションに対して内部的にリクエストを受け渡す際にアクセスで利用されたプロトコルが含まれている。
+
+この値を使うことで、HTTP なのか HTTPS なのかを判定できるのである。
+
+この条件判定が true の場合（つまり、本番環境で HTTP によりアクセスしてきた場合）はページが見つからないという 404 を返すようにしている。
+
+</details>
+
+無事コードが変更できたら、
+
+```bash
+git commit -am "HTTP のアクセスを禁止にする"
+```
+
+以上で、インデックスに加えると同時にコミットしてしまおう。  
+コミットが完了したら、Heroku に再度デプロイを行う。
+
+```bash
+# master-2019 はローカル側のブランチ（という想定）、master はリモート（Heroku側）のブランチ
+git push heroku master-2019:master
+```
+
+そうして再び `http://〜〜〜.herokuapp.com/posts` （https ではなく http）にアクセスして、「ページが見つかりません」と返ってくれば HTTP でのアクセスを禁止できたとわかる。
+
+なお、この実装ではページは表示できないが、Basic 認証自体は実行できてしまう。アクセスできないため HTTP の URL が使い続けられることはないと思われるが、とはいえ最初から HTTPS のプロトコルの URL だけを配布する必要はあるので注意されたい。
+
+以上をもって、秘密の匿名掲示板の開発、および脆弱性対策が完了し、インターネットに公開できた！
