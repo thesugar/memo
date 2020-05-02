@@ -1357,6 +1357,10 @@ server.listen(port, () => {
   - `heroku help` とすればコマンドの使い方が表示される。
   - `heroku login -i` とするとログインできる
 - プロジェクトディレクトリで `Procfile` を作成する
+  - ```bash
+    echo "web: node index.js" > Procfile
+    ```
+    として作成する。
   - `Procfile` は、Heroku がアプリを動作させる際に「どのようなコマンドを実行すべきなのか」を認識するための設定ファイル。
 - 次に `app.json` というファイルを作成し、以下のように書く。これは、Heroku で動かすアプリの説明ファイル。
 
