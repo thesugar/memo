@@ -955,3 +955,805 @@ Router オブジェクトを登録する `app.use` 関数の第一引数には�
 
 http://localhost:8000/users にはログインしないとアクセスできないことを確かめられれば成功。
 </details>
+
+## § 4. テスティングフレームワーク
+### テスティングフレームワークとは
+テストといえばここまでは、Node.js の assert モジュールを利用したテストを行ってきた。しかし、この assert モジュールだけでは、テストをする際に不便な点がいくつかあった。
+
+必要な機能で言えば、以下がある。
+
+- テストを細かく分割する機能
+- テストの一つ一つ新見をつけて、実行結果の集計結果を表示する機能
+- テスト失敗の際に、どのような値が正解で実際はどのような値だったかを表示する機能
+- 細かく分割されたテストの最初と最後に、必ず実行する処理を集約する機能
+
+これらは、assert モジュールには存在せず、自分で実装しなくてはいけなかったが、**テスティングフレームワーク** にはこういった便利な機能があらかじめ取り揃えられている。
+
+### テストを行う理由
+そもそもなぜテストを行うのか。たとえば、サービスの根幹に関わるような複雑なルールが正しく動くというのは非常に重要なことである。具体例を挙げると
+
+- 金融システムにおける手数料の計算
+- ゲームにおけるダメージの計算
+- 有料サービスで、とある機能を利用できるかどうかの判定
+
+これらは複雑な条件が絡み合って結果がもとまるので、不具合が発生しやすく、しかも不具合があった場合には悪用されるおそれがある。最悪の場合、サービスの根幹を揺るがす問題に発展しかねない。
+
+したがって、このようなルールは絶対にテストを行って *動作を保証* すべき。
+
+
+また、このような重要なルールでは、例外処理のテストにも気をつけなくてはいけない。
+
+「利用したい金融データにアクセスできないときに、ここまでやった処理を巻き戻す必要がある」という例で考えてみる。これは正常にシステムが動いている間には必要ない処理だが、この処理に失敗した場合にはサービスに大きなダメージを与えるおそれがある。
+
+つまり、発生しにくい、例外的な処理であっても、それが確実性を求められる処理である場合にはしっかりとテストを行わなければならない。
+
+> Note: アジャイルにおけるプラクティスの中に *夜安心して眠るために危なっかしいところを徹底的にテストする* という言葉がある。
+
+### ソフトウェアテストの種類
+
+- モジュール単体をテストする **ユニットテスト**
+- 複数のモジュールを結合して機能をテストする **結合テスト**
+- システム全体が正しく動くことをテストする **システムテスト**
+
+今回実践するのはユニットテストである。
+
+モジュールとは、外部に対するインターフェースを制限することで、行修正が高く交換可能な部品であると説明した。このユニットテストでは、その外部に対して提供しているインターフェースの機能のみをテストしていく。
+
+このように、モジュール内部の仕組みを意識することなく、外部のインターフェースからのみテストする手法を **ブラックボックステスト** という。
+
+### mocha を使ってテストを書いてみる
+
+```bash
+yarn add mocha@4.0.1 --dev
+```
+
+> `--dev` オプションは、開発時にのみ利用するライブラリを `package.json` に記述しつつインストールする際に記述する。
+
+mocha が正しく動作するか確認してみよう。
+
+```bash
+node_modules/mocha/bin/mocha -h
+```
+
+以上のコマンドを実行して、ヘルプが表示されれば問題なくインストールされている。
+
+### モジュールのテストを行う
+`damage-calc` という、ゲームにおけるダメージ計算を行うモジュールのテストを行うという想定で書いていく。
+
+まずは、[こちら](https://github.com/progedu/damage-calc-4004) の README.md から、モジュールの説明を読んでみる。
+
+実際にこのモジュールを動かしてみよう（もちろん手元にコードを clone してきてから）。`node` コマンドにより REPL を起動し、以下を実行する。
+
+```js
+var dc = require('.');
+console.log(dc.effectiveDamage(100, 50, 30));
+```
+
+すると、`83` という結果が表示され、とりあえず正常に動いているように思える。
+
+### ダメージ計算が正しく行えるかのテストを書いてみよう
+mocha では、`test/test.js` というファイルがあると自動的に実行してくれる。試しに、mocha のフォーマットに合わせてテストを記述していこう。
+
+<details close>
+<summary>test/test.js</summary>
+
+```js
+'use strict';
+const assert = require('assert');
+const dc = require('../');
+
+describe('#effectiveDamage()', () => {
+
+  it('正常なダメージ計算ができる', () => {
+    assert.equal(dc.effectiveDamage(100, 50, 30), 83);
+  });
+
+});
+```
+
+</details>
+
+mocha のテストでは、`describe` という関数で、テストの処理を無名関数として第二引数に渡す。第一引数にはテストを行う対象を文字列で記述し、ここでは `effectiveDamage` 関数を記述してある。
+
+そして、`describe` 関数に渡した無名関数の中では、さらに `it` 関数を利用して、どのような要件をテストしているのかを記述する。
+
+`it` 関数も第一引数に文字列でテストを行う要件、「正常なダメージ計算ができる」を記述し、第二引数には、テスト自体の処理を無名関数として記述する。
+
+実際のテストの処理として書かれている `assert.equal` 関数の使い方は、すでに説明したとおり、`dc.effectiveDamage(100, 50, 30)` と `83` が同じ値になることを検証している。
+
+では、テストを実行してみよう。
+
+```bash
+node_modules/mocha/bin/mocha
+```
+
+以上のコマンドを叩くことで自動的に `test/test.js` が実行される。
+
+### テストコマンドを短くする
+yarn のスクリプトに登録することでテストコマンドを短くできる。  
+`package.json` に以下のように追記する。
+
+```diff
++  "scripts": {
++    "test": "node_modules/mocha/bin/mocha"
++  },
+```
+
+----
+では次に、
+
+**負の入力値があった場合には 0 として扱い、2000 以上の入力値は 2000 として扱う**
+
+以上の要件がちゃんと実装されているかをテストしてみよう。
+
+### 負の入力値があった場合には 0 として扱うテスト
+
+`test/test.js` に以下を追記して、攻撃力、防御力、防御力貫通のそれぞれに -1 を入力しても　0 として扱われることをテストできるようにしよう。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+     assert.equal(dc.effectiveDamage(100, 50, 30), 83);
+   });
+
++  it('負の異常値におけるダメージ計算ができる', () => {
++    assert.equal(dc.effectiveDamage(-1, 0, 0), 0);
++    assert.equal(dc.effectiveDamage(0, -1, 0), 0);
++    assert.equal(dc.effectiveDamage(0, 0, -1), 0);
++  });
++
+ });
+```
+
+</details>
+
+記述ができたら `yarn test` でテストを実行してみる。-> 負の値に対しては問題ないようだとわかる。
+
+### 2000 以上の入力値は 2000 として扱うテスト
+
+次に、以下のように `test/test.js` を編集して、2000 以上の値が 2000 として扱われるかをテストしよう。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+     assert.equal(dc.effectiveDamage(0, 0, -1), 0);
+   });
+
++  it('2000より大きい異常値におけるダメージ計算ができる', () => {
++    assert.equal(dc.effectiveDamage(2001, 0, 0), 2000);
++    assert.equal(dc.effectiveDamage(300, 2150, 0), 14);
++    assert.equal(dc.effectiveDamage(300, 2000, 2001), 300);
++  });
++
+ });
+```
+以上のテストでは
+
+- 2001 の攻撃力の時に 2000 の攻撃力になること
+- 300 の攻撃力で 2150 の 防御力の時に 2000 の防御力として扱われ、 ダメージが 14 となること
+- 300 の攻撃力で 2000 の 防御力の時に、 防御力貫通が 2001 だと実効防御力は 0 として扱われ、 ダメージが 300 となること
+
+これらの数値を、それぞれ実際にテストしている。
+</details>
+
+テストを書いたら、`yarn test` でテストを実行する。
+
+そうすると、赤い `failing` という文字が表示される。これがテストの失敗である。`test/test.js:18:12` と書かれているのは、`test/test.js` の 18 行目、12 列で失敗したことを示している。
+
+→ このテスト結果をもとに、`index.js` の中の、入力値を正常値化する関数である `normalize` 関数を直す。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+ function normalize(n) {
+   if (n < 0) {
+     return 0;
++  } else if (n >= 2000) {
++    return 2000;
+   } else {
+     return n;
+   }
+```
+
+</details>
+
+今度は、次の要件、**実効防御力は、防御力 - 防御力貫通 で定義され、この実効防御力は、0 未満にはならない。** を検証する。
+
+以下のテストを `test/test.js` に追記する。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+     assert.equal(dc.effectiveDamage(300, 2000, 2001), 300);
+   });
+
++  it('実効防御力は0未満にならない', () => {
++    assert.equal(dc.effectiveDamage(500, 100, 800), 500);
++  });
++
+ });
+```
+</details>
+
+これは、攻撃力が 500 で防御力が 100 、防御力貫通が 800 の時は、 実効防御力が 0 としてみなされ、ダメージが 500 となるというテストである。
+
+`yarn test` でテスト実行すると、テストが失敗し、この要件も正しく実装されていないことがわかる。
+
+`index.js` を以下のように修正する。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+ function effectiveDamage(power, armor, armorPenetration) {
+   let effectiveArmor = normalize(armor) - normalize(armorPenetration);
+   // 以下は教材どおりの実装だが、const effectiveArmor = Math.max(0, normalize(armor) - normalize(armorPenetration)) で OK
++  effectiveArmor = effectiveArmor <= 0 ? 0 : effectiveArmor;
+   const damageDecrease = effectiveArmor / (100 + effectiveArmor);
+   return Math.floor(normalize(power) * (1 - damageDecrease));
+ }
+```
+</details>
+
+そうしたら `yarn test` を実行して、すべてのテストが成功することを確認する。
+
+## 継続的インテグレーション
+### 継続的インテグレーションとは
+継続的インテグレーション（CI; Continuous Integration）とは、ソフトウェア開発において、継続的にソフトウェアのコードの品質の低下や機能の問題を早期に検出し、開発の効率化を図る週間のこと。
+
+継続的インテグレーションの実践として、CI ツールと呼ばれるツールを用いて、
+
+- ソースコード自体の品質の解析（静的解析）
+- 依存ライブラリの解決やコンパイルなどを行うビルド
+- ソフトウェアのテスト
+- 配布のためのドキュメントやパッケージの作成
+- ソフトウェアの環境へのデプロイ
+
+を、ソースコードの変更があるたびに行う、ということが一般的に行われ値流。
+
+今回はその中でも、ビルドとテストの 2 つを CI ツールを用いて自動化してみる。
+
+今回は CI ツールとして　CircleCI を用いる。
+
+### CircleCI 入門
+
+**今回使うソースコードは [こちら](https://github.com/progedu/damage-calc-4005-v2-yarn)**
+
+GitHub と連携してログインするところまでは省略。
+
+CircleCI にログインすると、Welcome to CircleCI! と書かれたページが表示されるので、ここで画面左側に表示されている Add Projects をクリックする。
+
+次に、CI ツールで利用するプロジェクトを選択する（画面には、連携した GitHub の repo が表示されている）。今回は、並んでいる項目から `damage-calc` を見つけ、その右側にある Set Up Project ボタンをクリックする。
+
+次に、設定画面が表示されるので、Operating System は Linux、Language は Node が選択されていることを確認し、ページ下部にある Start building ボタンをクリックする。
+
+<img src="https://cdn.fccc.info/AhaT/soroban/ad6f46ef6375136e03bed87091c2d30b/soroban-guide-2845/42493aa0-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+すると `https://circleci.com/gh/自分のGitHubアカウント/workflows/damage-calc` のような URL にジャンプし、ジョブとテストが実行されていく様子が次々に画面に表示される。画面上部に QUEUED と表示されている間は実行開始を待っている状態で RUNNING と表示されている間はビルドとテストが実行されている状態。いずれの場合も、完了するまでしばらく待つ。
+
+<img src="https://cdn.fccc.info/9YPR/soroban/0e8e8e6f0d9c6204556aebcfb42b1233/soroban-guide-2845/7c9fd31b-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+しばらく待つと、RUNNING の表示が FAILED に切り替わる。
+
+<img src="https://cdn.fccc.info/xZ6r/soroban/cd12157f95b7a7674c71a754b18b468a/soroban-guide-2845/47c10b6f-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+FAILED と書かれた部分をクリックすると、具体的になんのジョブが失敗したのかが表示される。
+
+ここでは、ビルドジョブが失敗したようだとわかる。失敗したジョブをクリックすれば詳細を確認できる。  
+詳細をスクロールして見ていくと、`yarn test` というテストが失敗したようだということまでわかる。
+
+----
+ここで、ソースコード（今回使っているソースコードは https://github.com/progedu/damage-calc-4005-v2-yarn）を確認すると、`effectiveDamage` 関数の宣言のところで、`function` を `functino` と typo していたことがジョブ失敗の原因とわかる。
+
+その部分を修正したら commit して GitHub にプッシュする。
+すると、CircleCI で自動的にビルドとテストが行われる（今回はテストも無事に通って success となる）。
+
+このように、GitHub にソースコードの変更がプッシュされたと同時に、つねに新しくビルドとテストを行って、ソースコードが問題ないかチェックしてくれる。  
+これが CI ツールがやってくれることである。
+
+なお、てすと　の前のジョブでは、`yarn install` が行われており問題なく依存モジュールがインストールできることもチェックされている。
+
+CircleCI では、ジョブ・テストの結果をメールで通知してくれるうえ、別途設定をすれば、CircleCI からの通知を自動的に Slack の特定のチャンネルに流し、チームメンバーに周知することもできる。
+
+CircleCI では、ジョブとテストの他にも、ソースコード自体の品質を静的に解析したり、Heroku などのクラウドサービスへのデプロイを行うための機能も備わっている。
+
+ジョブのページに戻り、よく見てみると、ジョブ結果のページ上部の Test Summary というタブに以下のような表示がされている。
+
+<img src="https://cdn.fccc.info/B2Ps/soroban/75ee589a60541864de54d55771968e37/soroban-guide-2845/efe26794-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+"Set Up Test Summary" というボタンは、[テスト結果の出力に関するページ](https://circleci.com/docs/2.0/configuration-reference/#store_test_results) へのリンクである。
+
+このページでは、設定ファイルを編集することでテストの結果を JUnit テスティングフレームワークの形式などでshつ力することが可能であると書かれている。
+
+結果を出力することによって、
+
+- テストのジョブ詳細情報の把握
+- テストを並列処理する際の調整と高速化
+
+が可能。これを試してみよう。
+
+まずは、mocha の JUnit 形式でのレポーター、mocha-junit-reporter のインストールを行う。
+
+```bash
+yarn add mocha-junit-reporter@1.13.0 --dev
+```
+
+以上をじっこう　してインストールする。続いて、`.circleci` ディレクトリ内にある `config.yml` ファイルを開く。
+
+[JUnit 形式での出力を行う設定](https://circleci.com/docs/2.0/collect-test-data/) を参考に、`config.yml` の内容を以下のように編集する。
+
+なお、`yaml` 形式（`.yml`）のファイルは、`pug` ファイルのように、インデントを含めて内容を認識するため、間違えないように気を付けること。
+
+
+*.circleci/config.yml*
+
+```yml
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/node:8.9.4
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+          - v1-dependencies-{{ checksum "package.json" }}
+          - v1-dependencies-
+
+      - run: yarn install
+
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+
+      - run: mkdir junit
+      - run:
+          command: node_modules/.bin/mocha test --reporter mocha-junit-reporter
+          environment:
+            MOCHA_FILE: ./junit/test-results.xml
+          when: always
+      - store_test_results:
+          path: ./junit
+      - store_artifacts:
+          path: ./junit
+```
+
+この記述では、テスト時に実行するコマンドを上書きして、`yarn test` とは異なるコマンドに変えている。
+
+```yml
+- run: mkdir junit
+```
+
+まずここで、JUnit 形式でのデータ出力先として `junit` というディレクトリを作成している。
+
+次に、
+
+```yml
+- run:
+    command: node_modules/.bin/mocha test --reporter mocha-junit-reporter
+    environment:
+      MOCHA_FILE: ./junit/test-results.xml
+    when: always
+```
+
+このコマンドは、mocha-junit-reporter のコマンドオプションを利用して、先ほど作成した `junit` ディレクトリに、`test-results.xml` というファイル名で JUnit 形式のテストの結果を出力するという設定でテストを実行させている。
+
+最後に、
+
+```yml
+- store_test_results:
+    path: ./junit
+- store_artifacts:
+    path: ./junit
+```
+
+この部分で先ほど出力した結果の場所（`junit` ディレクトリ）を示し、Circle CI に読み込ませている。
+
+以上の変更ができたところで、コミットをして GitHub にプッシュする。
+
+プッシュを行ったら、CircleCI のダッシュボードから、新しいジョブが走っていることを確認して、一番上のジョブのバーをクリックする。  
+完了するとステータスが RUNNING から SUCCESS になる。
+
+そして、先ほどと違い Test Summary というタブに、
+
+<img src="https://cdn.fccc.info/9BP6/soroban/51f6798bd49841bf9172714edb68fdd5/soroban-guide-2845/9e2eedbd-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+以上のようにテストの結果の概要と、最も処理に時間がかかったテストが表示されるようになる。
+
+### Circle CI のバッジ
+CircleCI の Jobs のページ（https://circleci.com/dashboard）を開き、左側に表示されているプロジェクトの一覧で、プロジェクト名の右に表示されている歯車アイコンをクリックする。
+
+設定画面が開いたら、左側のメニューから Status Badges という項目を選択すると、Markdown 形式に埋め込むことができるコードが表示される。
+
+<img src="https://cdn.fccc.info/5oDN/soroban/8adddb64ae8f752ada424effac90443b/soroban-guide-2845/88067a8c-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+これをたとえば README に埋め込むことで、自分の GitHub のプロジェクトの URL に、CircleCI のジョブのバッジが表示されるようになる。
+
+<img src="https://cdn.fccc.info/ygSq/soroban/b7c815e872d95f2dbf3023a4da1e3080/soroban-guide-2845/51cd4d59-private.png?Expires=1588609707&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0NS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg2MDk3MDd9fX1dfQ__&Signature=W~VbGKmk-f1B1XCiBO9dy6gsRatjPpS3Nz~y-6q44lZz6mAFsADanW1~hi8MoFhmNj6thlnNamW5EL8ff9hA17S7vvk5ZqKJWav7YOU1SuGXw8JyogUU~V5Zf6q78yQrWNCiOebjvv-lKQWJlzAbbzhofWKqoBkaNTeo7p77LgjCBwBl3haoqGhSEaKwILmLtTmIWzlYeXN53aNPVS9Ms-bXs3FHtGB1775v6ng9trSo5F7YPfGCnFYyK21rMza-nV875a0zC9435zZXD0~v3KOgDeDdOSDhb3ZsoV-Mp7mlnRpTxI0ePExB6Fk7M2zWflARbnOg-F2I9Q8Akp5WBQ__">
+
+## クライアントのフレームワーク
+今回は、クライアントサイドのフレームワークを学ぶ。過去、HTML や HTML に組み込む JavaScript を学んだが、そのようなクライアントサイドの JavaScript に関してもフレームワークが存在する。
+
+今回はクライアントサイドのフレームワークを使って、
+
+- 複数のファイルにまたがる JavaScript をひとつにまとめられるようになる
+- HTML で動く JavaScript でも Node.js のモジュールを利用できる
+
+以上のことができるようになる。
+
+さっそく複数のファイルにまたがる JavaScript をひとつにめとめるためのフレームワークについて学ぼう。ここでは [webpack](https://webpack.github.io/) というフレームワークを使う。
+
+### webpack
+**webpack** は、依存関係を持つ JavaScript などの HTML に組み込むファイルを、依存関係を解決し、ひとつのファイルにまとめてくれるフレームワーク。
+
+さらに webpack は、Node.js のモジュールを、クライアントの HTML で利用可能な JavaScript に変換するという機能を内包している。
+
+### JavaScript のファイルをひとつにまとめるということ
+そもそもなぜ、JavaScript のファイルを適切にひとつにまとめる必要があるのか？
+
+ブラウザの仕組みと TCP 通信の仕組みの特製にその理由がある。
+
+ブラウザは一度でも利用したことのある画像や CSS、JS などの静的なファイルに関しては、二度目以降に必要になったときに再度アクセスはせず、すでにダウンロードしたものを用いようとする。このすでにダウンロード済みの静的なファイルのことを**キャッシュ**という。
+
+キャッシュを利用しようとするこのブラウザの挙動を利用するため、共通して使われるファイルをできるだけひとつのファイルとしてまとめておきたいのである。  
+そうすることでキャッシュの利用効率が上がり、サーバーの負荷や通信量を減らし、ユーザーが快適に利用できるだけでなく、サービスの提供者のリソースを効率よく使うことができる。
+
+そして、もう一つメリットがある。HTTP が利用している通信のプロトコルである TCP は、接続の確立にコストがかかる通信方式であるといえる。  
+そのため静的なファイル群ができるだけ少ない数のファイルにまとめられていればいるほど、サーバーとの接続回数を少なくすることができる。これによってクライアントもサーバーも負荷が少なく Web サービスを利用することができるのである。
+
+以上のような理由から、webpack のようなクライアント JavaScript をまとめるフレームワークがよく利用されている。
+
+----
+
+では実際に実装しながら学んでいく。Express の学習で使った express-study プロジェクト（ディレクトリ）でやっていく。
+
+まずは必要なモジュールをインストールする。
+
+```bash
+yarn add webpack@4.26.1 webpack-cli@3.1.2 @babel/core@7.1.6 @babel/preset-env@7.1.6 babel-loader@8.0.4 --dev
+yarn add ../damage-calc
+# damage-calc はローカルの別ディレクトリからインストール。オリジナルの教材では以下のように git からインストールしている
+# yarn add https://github.com/progedu/damage-calc-4006.git
+```
+
+`webpack` は上述のとおり JS などの静的なファイルをまとめてくれるモジュールであり、このモジュールをインストールすることで、Node.js のモジュールを HTML でも利用することができる機能を提供する browserify というモジュールも一緒にインストールされる。
+
+babel-loader は、最新の JS で書かれたコードをブラウザが実行できるバージョンにコンパイルするモジュール。
+
+もうひとつインストールした `damage-calc` は、前回までに開発したダメージ計算を行うモジュールである。
+
+無事インストールが完了したところで、次は必要なファイルやディレクトリを作っていく。
+
+```bash
+touch webpack.config.js
+mkdir app
+touch app/entry.js
+# public/javascripts はすでにあるはずだが、ない場合は ↓
+# mkdir public/javascripts
+```
+
+`webpack.config.js` は webpack の設定ファイル、`app/entry.js` は HTML に組み込む JavaScript ファイル、`public/javascripts` はまとめられた JavaScript ファイルが出力されるディレクトリとなる。
+
+次に、`webpack.config.js` を以下のように編集する。
+
+<details close>
+<summary>webpack.config.js</summary>
+
+```js
+module.exports = {
+  context: __dirname + '/app',
+  entry: './entry',
+  output: {
+    path: __dirname + '/public/javascripts',
+    filename: 'bundle.js'
+  },
+  mode: 'none',
+  module: {
+    rules: [{
+      test: /\.js$/,
+      exclude: /node_modules/,
+      use: {
+        loader: 'babel-loader',
+        options: {
+          presets: ['@babel/preset-env']
+        }
+      }
+    }]
+  }
+};
+```
+
+</details>
+
+```js
+context: __dirname + '/app',
+entry: './entry',
+```
+
+これはクライアントの JavaScript が含まれるディレクトリと、依存関係を読み解く最初の入り口となる JavaScript ファイル名 `./entry` を設定している。実際は `entry.js` というファイル名だが、拡張子 `.js` は省略して書かれている。
+
+```js
+  output: {
+    path: __dirname + '/public/javascripts',
+    filename: 'bundle.js'
+  }
+```
+
+これらは、まとめられた JavaScript の出力ディレクトリと、出力される JavaScript 名 `bundle.js` の設定。
+
+では次は、試しに変換を行う（=クライアントで使えるようにする）JavaScript を `app/entry.js` に記述してみよう。
+
+<details close>
+<summary>app/entry.js</summary>
+
+```js
+'use strict';
+import dc from 'damage-calc';
+const root = document.getElementById('root');
+root.innerHTML = '<p>攻撃力 100, 防御 50, 防御貫通 30 のダメージは、'
+  + dc.effectiveDamage(100, 50, 30) + '</p>';
+```
+
+</details>
+
+以上は、ダメージ計算のモジュールを利用して HTML の body 内に計算結果を出力するコードである。
+
+```js
+import dc from 'damage-calc'
+```
+
+このコードによってモジュールを読み込んでいる。この import 文は、ES modules という機能で、Node.js の require メソッドと同様に JavaScript のモジュールを読み込むことができる構文である。現在、フロントエンドに関しては ES Modules で書くことが一般的になっているので、ここでもクライアントでは import 文を使うものとする。また、Node.js でも近いうちに import 文が使用できるようになると思われる。
+
+では、このように Node.js で実装されたモジュールを利用した JavaScript が、クライアントの JavaScript 向けに変換されるとどのようになるのかを確認してみよう。
+
+```bash
+node_modules/.bin/webpack
+# 上記でエラーが出る場合は代わりに以下
+# node node_modules/webpack/bin/webpack.js
+```
+
+以上のコードを実行することで、変換が実行される。
+
+```
+Hash: c6946ea5753d380f72ed
+Version: webpack 4.26.1
+Time: 558ms
+Built at: 05/04/2020 3:53:55 PM
+    Asset      Size  Chunks             Chunk Names
+bundle.js  5.53 KiB       0  [emitted]  main
+Entrypoint main = bundle.js
+[0] ./entry.js 204 bytes {0} [built]
+    + 1 hidden module
+```
+
+このように表示されれば変換は成功。出力された `public/javascripts/bundle.js` を開いてみよう。
+
+<details close>
+<summary>bundle.js</summary>
+
+```js
+/******/ (function(modules) { // webpackBootstrap
+/******/ 	// The module cache
+/******/ 	var installedModules = {};
+/******/
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/
+/******/ 		// Check if module is in cache
+/******/ 		if(installedModules[moduleId]) {
+/******/ 			return installedModules[moduleId].exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = installedModules[moduleId] = {
+/******/ 			i: moduleId,
+/******/ 			l: false,
+/******/ 			exports: {}
+/******/ 		};
+/******/
+/******/ 		// Execute the module function
+/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/
+/******/ 		// Flag the module as loaded
+/******/ 		module.l = true;
+/******/
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/
+/******/
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = modules;
+/******/
+/******/ 	// expose the module cache
+/******/ 	__webpack_require__.c = installedModules;
+/******/
+/******/ 	// define getter function for harmony exports
+/******/ 	__webpack_require__.d = function(exports, name, getter) {
+/******/ 		if(!__webpack_require__.o(exports, name)) {
+/******/ 			Object.defineProperty(exports, name, { enumerable: true, get: getter });
+/******/ 		}
+/******/ 	};
+/******/
+/******/ 	// define __esModule on exports
+/******/ 	__webpack_require__.r = function(exports) {
+/******/ 		if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 			Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 		}
+/******/ 		Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 	};
+/******/
+/******/ 	// create a fake namespace object
+/******/ 	// mode & 1: value is a module id, require it
+/******/ 	// mode & 2: merge all properties of value into the ns
+/******/ 	// mode & 4: return value when already ns object
+/******/ 	// mode & 8|1: behave like require
+/******/ 	__webpack_require__.t = function(value, mode) {
+/******/ 		if(mode & 1) value = __webpack_require__(value);
+/******/ 		if(mode & 8) return value;
+/******/ 		if((mode & 4) && typeof value === 'object' && value && value.__esModule) return value;
+/******/ 		var ns = Object.create(null);
+/******/ 		__webpack_require__.r(ns);
+/******/ 		Object.defineProperty(ns, 'default', { enumerable: true, value: value });
+/******/ 		if(mode & 2 && typeof value != 'string') for(var key in value) __webpack_require__.d(ns, key, function(key) { return value[key]; }.bind(null, key));
+/******/ 		return ns;
+/******/ 	};
+/******/
+/******/ 	// getDefaultExport function for compatibility with non-harmony modules
+/******/ 	__webpack_require__.n = function(module) {
+/******/ 		var getter = module && module.__esModule ?
+/******/ 			function getDefault() { return module['default']; } :
+/******/ 			function getModuleExports() { return module; };
+/******/ 		__webpack_require__.d(getter, 'a', getter);
+/******/ 		return getter;
+/******/ 	};
+/******/
+/******/ 	// Object.prototype.hasOwnProperty.call
+/******/ 	__webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
+/******/
+/******/ 	// __webpack_public_path__
+/******/ 	__webpack_require__.p = "";
+/******/
+/******/
+/******/ 	// Load entry module and return exports
+/******/ 	return __webpack_require__(__webpack_require__.s = 0);
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony import */ var damage_calc__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
+/* harmony import */ var damage_calc__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(damage_calc__WEBPACK_IMPORTED_MODULE_0__);
+
+var root = document.getElementById('root');
+root.innerHTML = '<p>攻撃力 100, 防御 50, 防御貫通 30 のダメージは、' + +damage_calc__WEBPACK_IMPORTED_MODULE_0___default.a.effectiveDamage(100, 50, 30) + '</p>';
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * ダメージが防御力や防御力貫通によってどのようなダメージになるのかを計算する関数
+ * 
+ * 負の入力値があった場合には0として扱い、2000以上の入力値は2000として扱う。
+ * 実効防御力は、防御力 - 防御力貫通 で定義され、
+ * この実行防御力は、0未満にはならない。
+ * ダメージ減少率は、実効防御力 / (100 + 実効防御力) で定義され、
+ * ダメージは、攻撃力 * (1 - ダメージ減少率) を小数点以下で四捨五入した値となる。
+ * 
+ * @param {Number} power 攻撃力
+ * @param {Number} armor 防御力
+ * @param {Number} armorPenetration 防御力貫通
+ * @return {Number} ダメージ
+ */
+function effectiveDamage(power, armor, armorPenetration) {
+  let effectiveArmor = Math.max(0, normalize(armor) - normalize(armorPenetration));
+  const damageDecrease = effectiveArmor / (100 + effectiveArmor);
+  return Math.floor(normalize(power) * (1 - damageDecrease));
+}
+
+/**
+ * 異常な可能性のある入力値を正常値にする
+ * @param {Number} n 異常な可能性のある入力値
+ * @return {Number} 正常値
+ */
+function normalize(n) {
+  if (n < 0) {
+    return 0;
+  } else if (n > 2000) {
+    return 2000;
+  } else {
+    return n;
+  }
+}
+
+module.exports = {
+  effectiveDamage: effectiveDamage
+};
+
+
+/***/ })
+/******/ ]);
+```
+</details>
+
+さらっと解説すると、ブラウザ上で動く JavaScript において、`module.exports` というオブジェクトが利用可能なようにしているコードが上の方（`return module.exports` している部分）にある。
+
+その後は各依存モジュールに関連する JavaScript のコードが結合され、単一の JavaScript のファイルとなっていることがわかる。
+
+このように、webpack はただ JavaScript を結合するだけではなく、Node.js のモジュールという機能自体を再現してくれるのである。
+
+それでは、この JS のコードを、Express で動かしている pug のテンプレートにも組み込んでみよう。
+
+<details close>
+<summary>コード</summary>
+
+**views/layout.pug**
+
+```diff
+  head
+    title= title
+    link(rel='stylesheet', href='/stylesheets/style.css')
++   script(defer, src="/javascripts/bundle.js")
+  body
+    block content
+```
+
+**views/index.pug**
+
+```diff
+  extends layout
+
+  block content
+    h1= title
+    p Welcome to #{title}
+    if user
+      p Hello, #{user.username}
+      a(href="/logout") Logout
+    else
+      a(href="/login") Login
++   div#root
+```
+
+以上のように head に script タグを JS ファイルが読み込まれるように実装する。defer 属性は、文書の解析完了後にスクリプト（JavaScript）を実行することをブラウザに示す属性。こうすることで、ページの表示速度が向上する。
+</details>
+
+以上完了したら、サーバーを再起動してみる。`PORT=8000 yarn start` で起動を行い、http://localhost:8000/ にアクセスしてみて、「攻撃力 100, 防御 50, 防御貫通 30 のダメージは、83」というようにダメージ計算の結果が表示されれば成功！
+
+ついでに、Node.js 自体に組み込まれているモジュール、たとえば crypto モジュールもクライアント側で動かすことができるかどうか確認してみよう。
+
+
+<details close>
+<summary>app/entry.js</summary>
+
+```diff
+ import dc from 'damage-calc';
++import crypto from 'crypto';
+ const root = document.getElementById('root');
+ root.innerHTML = '<p>攻撃力 100, 防御 50, 防御貫通 30 のダメージは、'
+-   + dc.effectiveDamage(100, 50, 30) + '</p>';
++   + dc.effectiveDamage(100, 50, 30) + '</p><p>'
++   + crypto.randomBytes(8).toString('hex') + '</p>';
+```
+
+</details>
+
+以上のように変更し、`node_modules/.bin/webpack` コマンドで JavaScript ファイルを更新する。完了したら、ブラウザのページも更新する。
+
+「1b2053ff20ec1ea9」のような文字列が、http://localhost:8000/ のページ下部に表示されるようになれば成功。
+
+なお、このようにすると、`public/javascripts/bundle.js` はファイルサイズが非常に大きくなる。これは、crypto の動作に必要な Node.js の機能がブラウザ上でも使えるように、いろいろなコードが追加されたためである。
