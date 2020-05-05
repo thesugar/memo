@@ -95,7 +95,7 @@ $ node ./bin/www
 ```
 
 以上のように表示されれば起動は成功。  
-http://localhost:8000/ にアクセスしてみると、Express のジェネレーターで作られた雛形のページが表示される。
+`http://localhost:8000/` にアクセスしてみると、Express のジェネレーターで作られた雛形のページが表示される。
 
 <img src="https://cdn.fccc.info/LMwq/soroban/2c0af42e5ff52a1d3f4e43c257e1763e/soroban-guide-2841/e09c5cff-private.png?Expires=1588522755&Key-Pair-Id=APKAIXOVMBEKCVHZBGWQ&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZG4uZmNjYy5pbmZvLyovc29yb2Jhbi8qL3Nvcm9iYW4tZ3VpZGUtMjg0MS8qLioiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE1ODg1MjI3NTV9fX1dfQ__&Signature=BlkupVdUAYDP4fS23ViHqsO-zN6E0~1QHAIkZDdfc0uEvmvvof0O9NasiPuX-WlBKG0-~9NmGLFn81cdBxnU17Ip9rloyhLSvw2wznhTWFCAAoi6X8U3nXa6YOqnkU-syRfrUeCO78Zfoq0ON5EqovryWyYMrxSa7K-dHttC0YaHRSXAcm3Ni2xt5gbAi3KlG1QWHdtu-QQw3FlzdUUC2cfGywpgiY9Apir~WG6db2LwGl9MYfHaeI~I8tOlDClguabdDyDslaB9tUBykhpCgbKkuocQbGFtFgZn00g5aqy~iBLykCDc0lX2t8qo0h5eoljZ1nMxC97cbFeId8QLxw__">
 
@@ -249,7 +249,7 @@ yarn install
 DEBUG=express-api:* PORT=8000 yarn start
 ```
 
-以上でサーバーを起動して Chrome で http://localhost:8000/ にアクセスしよう。その後、デベロッパーツールを開く。
+以上でサーバーを起動して Chrome で `http://localhost:8000/` にアクセスしよう。その後、デベロッパーツールを開く。
 
 Network タブを開き、再読み込みすると、localhost へのアクセスが表示されるので、表示されたリストから localhost と書かれた行を選択する。
 
@@ -525,8 +525,8 @@ module.exports = router;
 ```
 </details>
 
-以上完了したら、`DEBUG=express-api:* PORT=8000 yarn start` で再起動を行って、http://localhost:8000/photos にアクセスすると「Some photos」という文字列が表示される。  
-また、たとえば http://localhost:8000/photos/vacation にアクセスすると「vacation」という文字列が表示される。
+以上完了したら、`DEBUG=express-api:* PORT=8000 yarn start` で再起動を行って、`http://localhost:8000/photos` にアクセスすると「Some photos」という文字列が表示される。  
+また、たとえば `http://localhost:8000/photos/vacation `にアクセスすると「vacation」という文字列が表示される。
 
 ## §3. GitHub を使った外部認証
 この回では、フレームワークを使うと便利な、外部サービスを利用したユーザーの外部認証機構を実装してみよう。この回を終えると、Express を利用して GitHub のアカウントでログインできるサイトを作ることができるようになる。
@@ -796,8 +796,8 @@ app.get('/auth/github/callback',
 `/login` のルーティングはまだ実装していないため、これからまた実装する。なお、認証に成功していたバイアは、`/` というドキュメントルートにリダイレクトするように実装している。
 </details>
 
-ここまで実装できたところで、サーバを再起動して、http://localhost:8000/auth/github にアクセスしてみよう。GitHub にリダイレクトされて、"Authorize application" のページが表示されれば成功。  
-ここで Authorize application ボタンをクリックして、このアプリケーションにアクセスする認可を与え、その後、http://localhost:8000/ が表示されれば、外部認証の実装ができたことになる。
+ここまで実装できたところで、サーバを再起動して、`http://localhost:8000/auth/github` にアクセスしてみよう。GitHub にリダイレクトされて、"Authorize application" のページが表示されれば成功。  
+ここで Authorize application ボタンをクリックして、このアプリケーションにアクセスする認可を与え、その後、`http://localhost:8000/` が表示されれば、外部認証の実装ができたことになる。
 
 ただしこのままだとログアウトできなかったりログインしていることがわからないため、ここからさらに実装を加えていく。
 
@@ -953,7 +953,7 @@ a(href="/auth/github") Login with GitHub
 
 Router オブジェクトを登録する `app.use` 関数の第一引数にはパス、第二引数に `ensureAuthenticated` 関数、第三引数に Router オブジェクトを渡して呼び出すことで、そのパスへのアクセスに認証が必要となる。
 
-http://localhost:8000/users にはログインしないとアクセスできないことを確かめられれば成功。
+`http://localhost:8000/users` にはログインしないとアクセスできないことを確かめられれば成功。
 </details>
 
 ## § 4. テスティングフレームワーク
@@ -1247,7 +1247,7 @@ FAILED と書かれた部分をクリックすると、具体的になんのジ�
 詳細をスクロールして見ていくと、`yarn test` というテストが失敗したようだということまでわかる。
 
 ----
-ここで、ソースコード（今回使っているソースコードは https://github.com/progedu/damage-calc-4005-v2-yarn）を確認すると、`effectiveDamage` 関数の宣言のところで、`function` を `functino` と typo していたことがジョブ失敗の原因とわかる。
+ここで、ソースコード（今回使っているソースコードは `https://github.com/progedu/damage-calc-4005-v2-yarn`）を確認すると、`effectiveDamage` 関数の宣言のところで、`function` を `functino` と typo していたことがジョブ失敗の原因とわかる。
 
 その部分を修正したら commit して GitHub にプッシュする。
 すると、CircleCI で自動的にビルドとテストが行われる（今回はテストも無事に通って success となる）。
@@ -1370,7 +1370,7 @@ jobs:
 以上のようにテストの結果の概要と、最も処理に時間がかかったテストが表示されるようになる。
 
 ### Circle CI のバッジ
-CircleCI の Jobs のページ（https://circleci.com/dashboard）を開き、左側に表示されているプロジェクトの一覧で、プロジェクト名の右に表示されている歯車アイコンをクリックする。
+CircleCI の Jobs のページ（`https://circleci.com/dashboard`）を開き、左側に表示されているプロジェクトの一覧で、プロジェクト名の右に表示されている歯車アイコンをクリックする。
 
 設定画面が開いたら、左側のメニューから Status Badges という項目を選択すると、Markdown 形式に埋め込むことができるコードが表示される。
 
@@ -1732,7 +1732,7 @@ module.exports = {
 以上のように head に script タグを JS ファイルが読み込まれるように実装する。defer 属性は、文書の解析完了後にスクリプト（JavaScript）を実行することをブラウザに示す属性。こうすることで、ページの表示速度が向上する。
 </details>
 
-以上完了したら、サーバーを再起動してみる。`PORT=8000 yarn start` で起動を行い、http://localhost:8000/ にアクセスしてみて、「攻撃力 100, 防御 50, 防御貫通 30 のダメージは、83」というようにダメージ計算の結果が表示されれば成功！
+以上完了したら、サーバーを再起動してみる。`PORT=8000 yarn start` で起動を行い、`http://localhost:8000/` にアクセスしてみて、「攻撃力 100, 防御 50, 防御貫通 30 のダメージは、83」というようにダメージ計算の結果が表示されれば成功！
 
 ついでに、Node.js 自体に組み込まれているモジュール、たとえば crypto モジュールもクライアント側で動かすことができるかどうか確認してみよう。
 
@@ -1754,6 +1754,467 @@ module.exports = {
 
 以上のように変更し、`node_modules/.bin/webpack` コマンドで JavaScript ファイルを更新する。完了したら、ブラウザのページも更新する。
 
-「1b2053ff20ec1ea9」のような文字列が、http://localhost:8000/ のページ下部に表示されるようになれば成功。
+「1b2053ff20ec1ea9」のような文字列が、`http://localhost:8000/` のページ下部に表示されるようになれば成功。
 
 なお、このようにすると、`public/javascripts/bundle.js` はファイルサイズが非常に大きくなる。これは、crypto の動作に必要な Node.js の機能がブラウザ上でも使えるように、いろいろなコードが追加されたためである。
+
+## § 7. DOM 操作のフレームワーク
+ここまでで、クライアント JavaScript のフレームワーク webpack について学んだ。webpack では Node.js で開発したモジュールを、そのままクライアントの JavaScript として利用することができた。
+
+今度はクライアントの JavaScript を実装する際に発生する、独特の要件に対するフレームワークについて学ぶ。
+
+どの独特の要件とは *DOM 操作*　である。
+
+### DOM
+**DOM** とは Document Object Model の略称で、XML や HTML などんお形式の文章を扱うための API である。
+
+DOM 操作とは、HTML で言えば body 要素の中の p 要素のテキストを更新したり、また新たに img 要素を足したり消したりするような操作である。つまり、構造化された文書に対して、ツリー構造の操作を行うことである。
+
+クライアント JavaScript では、頻繁に HTML の　DOM 操作を行う。
+
+この DOM 操作を行うために `document.gerElementById` 関数のような API を利用できるが、より簡単な記法でこれらの DOM を扱うためのフレームワークがいくつか存在する。
+
+ここではそのフレームワークとして jQuery を学ぶ。
+
+### jQuery
+jQuery は、HTML の文書の横断や操作、イベントハンドリング、アニメーションなどを行うための簡単な API を提供するライブラリ。
+
+jQuery はプラグイン機構を持ち合わせているため、jQuery を利用したプラグインも数多く存在し、一つのフレームワークとして機能する。
+
+たとえば特定の HTML の要素を取得する場合、通常の JavaScript では以下のようなコードになる。
+
+```js
+document.getElementById('hoge')
+```
+
+これを jQuery では
+
+```js
+$('#hoge')
+```
+
+以上のように、CSS のセレクタを使った記法を利用して、より簡単に記述することができる。また、jQuery を利用すると簡単なアニメーションを実装することも可能。
+
+実際にこのアニメーションの実装を試してみよう。
+
+まずは jQuery をインストールする。
+
+```bash
+yarn add jquery@3.4.1
+```
+
+次にアニメーションで動かすための四角い色付きのエリアを HTML ページ上に作る。
+
+今まで作ってきたプロジェクト（`express-study`）の `views/index.pug` を以下の変更差分のように編集する。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+   p Welcome to #{title}
++  div#block.block
++  button#scaling-button 拡大縮小
+   div#root
+```
+</details>
+
+追加した上の一行は div 要素を用意し、そこに `block` という名前の id と class の属性を設定している。pug テンプレートでは `HTMLタグ#id名` のように `#` でつなげると id 属性を設定できる。
+
+CSS も設定しておく。`public/stylesheets/style.css` に以下を追記する。
+
+<details close>
+<summary>コード</summary>
+
+```css
+.block {
+  width: 100pt;
+  height: 100pt;
+  margin: 20pt;
+  background-color: chocolate;
+}
+```
+</details>
+
+これは `block` という名称の class 属性がある要素のスタイルを指定したもの。
+
+では実際に jQuery を利用したアニメーションを書いてみよう。
+
+`app/entry.js` を以下のように書き換えてしまう（今まで書いていたダメージ計算のコードは消してしまってよい）。
+
+<details close>
+<summary>コード</summary>
+
+```js
+`use strict`
+import $ from 'jquery';
+const block = $('#block');
+const scalingButton = $('#scaling-button');
+
+scalingButton.click(() => {
+  block.animate({ width: '200pt', height: '200pt' }, 2000);
+  block.animate({ width: '100pt', height: '100pt' }, 2000);
+});
+```
+
+</details>
+
+```js
+import $ from 'jquery';
+```
+
+以上のコードは、jquery モジュールを読み込み、`$` という名前の変数に代入している。慣例として jQuery のオブジェクトは、`$` という変数に入れて利用される。
+
+```js
+const block = $('#block');
+const scalingButton = $('#scaling-button');
+```
+
+これらは、先ほど説明した CSS のセレクタを利用して HTML の要素を取得する API。ここでは、 `id="block"` がせっっていされた div 要素と、`id="scaling-button"` が設定された button 要素を取得している。
+
+```js
+scalingButton.click(() => {...})
+```
+
+以上のコードは、jQuery で取得した要素の jQuery オブジェクトの [`click 関数`](http://api.jquery.com/click/) の第一引数に無名関数を渡している。  
+要素がクリックされたときに、この click 関数に渡された関数が呼び出される。
+
+```js
+  block.animate({ width: '200pt', height: '200pt' }, 2000);
+  block.animate({ width: '100pt', height: '100pt' }, 2000);
+```
+
+以上は、jQuery オブジェクトにおける [animate 関数](http://api.jquery.com/animate/) を呼び出している。animate 関数は、CSS の style を JavaScript のオブジェクトとして定義したものを第一引数に、第二引数にはアニメーションする時間をミリ秒の整数で指定する。
+
+以上は 2 秒かけて四角の高さと幅を 200 pt にし、その後 2 秒かけて 100 pt に戻すというアニメーションの実装。
+
+実装ができたら、JavaScript を webpack で生成して確認してみよう。
+
+```bash
+node_modules/.bin/webpack
+# うまくいかなければ代わりに node node_modules/webpack/bin/webpack.js
+PORT=8000 yarn start
+```
+
+**ついでに**
+
+今度は、先ほどの四角形が 0.5 秒かけて右に移動し、その後 1 秒かけて戻ってくる「移動」ボタンを実装してみる。
+
+<details close>
+<summary>実装内容</summary>
+
+`views/index.pug`
+
+```pug
+button#moving-button 移動
+```
+
+`app/entry.js`
+
+```js
+const movingButton = $('#moving-button');
+
+movingButton.click(() => {
+  // 解答例では 'marginLeft' とシングルクオートで囲んでいるが、
+  // 囲まなくても（{ marginLeft : '500px' } としても）動作する
+  block.animate({ 'marginLeft': '500px' }, 500);
+  block.animate({ 'marginLeft': '20px' }, 1000);
+});
+```
+
+</details>
+
+## Ajax
+今まで学んできたクライアントサイドの JavaScript では、入出力処理のすべてが HTML の DOM とコンソール を利用して行うものであった。
+
+実はクライアントの JavaScript では HTTP における通信も記述することができる。その中でも、もっとも有名な方法が **Ajax** という技術である。
+
+### Ajax とは
+<img src='./images/ajax.png'>
+
+Ajax とは、Asynchronous JavaScript + XML の略称。asynchronous は非同期を意味する単語。
+
+ブラウザ上の JavaScript からサーバーへの非同期の HTTP リクエストを行い、その結果を使って UI の更新を行う手法を指す。
+
+元々ブラウザの JavaScript に XMLHttpRequest という通信を行う API があり、その API を利用する形式であったため、XML という名称が残っている。  
+とはいえ通信内容の形式が必ずしも XML 形式である必要はない。
+
+現在の Ajax 通信においては、利用しやすさや通信量の問題から JSON のフォーマットを利用することが多くなっている。
+
+この Ajax 技術が有名になったのは 2005 年に Google マップで利用されてから。Google マップは、Web ページ上にどこまでも続く地図を表示し、拡大やスクローリングに合わせて新しい地図の画像を非同期にサーバー上から取得する。  
+過去の地図サイトは、ただ地図の画像を Web ページに表示するだけで、地図を移動するときにはそのたびにページごと再読み込みが必要であった。Ajax の手法を用いることで、どこまでもスクロールできるような地図が実現可能となった。
+
+また、現在では Ajax を利用して、これまで複数のページで実装していたサイトを 1 つのページの複数の機能で表現することも多くなってきた。  
+このような単一の Web ページで複数の機能を表現したアプリのことを SPA（シングルページアプリケーション）という。
+
+この SPA は、複数のデバイスで動くアプリケーションが簡単に作れることから現在注目を集めているが、デバイスのスペックによっては、UI の表示や動作に時間がかかることから、その動作性能に対する考慮が必要となっている。
+
+### Ajax を使ってみよう
+ではさっそく、この Ajax を利用して、自動的にサーバーの状態を取得する Web ページを作ってみよう。
+
+この Ajax を、jQuery を利用して実装する。
+
+まずはサーバーサイドで、サーバーの状態を返す JSON の Web API を作成しよう。
+
+今回は `/server-status` というパスに GET でアクセスすると、サーバーのロードアベレージが取得されるように実装してみる。
+
+#### ロードアベレージ
+**ロードアベレージ** は、1 CPU における単位時間あたりの実行待ちとディスク I/O 待ちのプロセス数である。よくサーバーにおける負荷を計測する値として用いられる。  
+ロードアベレージが 1 の場合、1 CPU の麻疹においては CPU の利用待ちがつねに発生して、負荷がつねにかかっている状態になっていると言える。  
+なお、非常に高い負荷がかかっているときには 100 を超えることもある。
+
+コンソールで `uptime` コマンドを実行すれば、以下のように、起動してからの時間（アップタイム）とともにロードアベレージを表示することができる。
+
+```
+19:18:50 up 5 days, 15:02,  2 users,  load average: 0.00, 0.02, 0.02
+```
+
+ロードアベレージは、`load average:` ラベルの後に直近 1 分の値、直近 5 分の値、直近 15 分の値が表示される。
+
+---
+では、`/server-status` に GET アクセスすると以下のような JSON 形式でロードアベレージの配列が取得されるように実装してみよう。
+
+```json
+{"loadavg":[0.0029296875,0.0146484375,0.04541015625]}
+```
+
+（編集していくプロジェクトは今までの `express-study` ディレクトリでよい）
+
+まず、`routes/server-status.js` というファイルを以下のように作成する。
+
+<details close>
+<summary>コード</summary>
+
+```js
+'use strict';
+const express = require('express');
+const router = express.Router();
+const os = require('os');
+
+router.get('/', (req, res, next) => {
+  res.json({ loadavg: os.loadavg() });
+});
+
+module.exports = router;
+```
+
+**解説**
+
+- express モジュールを読み込んだら、Router オブジェクトを作成している
+- `const os = require('os')` で読み込んでいる OS モジュールは、ロードアベレージを取得するために使う。
+- `router.get(...)` は、GET メソッドで、`/` に対してのハンドラを登録する。`res.json` 関数は、受け取ったオブジェクトを JSON の形式でレスポンスとして返す関数。
+
+</details>
+
+次に `app.js` に、今作成した Router オブジェクトを登録する。  
+以下の変更差分のように修正する。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+ var indexRouter = require('./routes/index');
+ var usersRouter = require('./routes/users');
+ var photosRouter = require('./routes/photos');
++var serverStatus = require('./routes/server-status');
+ 
+ var app = express();
+ app.use(helmet());
+```
+
+```diff
+ app.use('/', indexRouter);
+ app.use('/users', ensureAuthenticated,  usersRouter);
+ app.use('/photos', photosRouter);
++app.use('/server-status', serverStatus);
+ 
+ app.get('/auth/github',
+   passport.authenticate('github', { scope: ['user:email'] }),
+```
+
+これで先ほどの Router オブジェクトをモジュールとして読み込み、パス `/server-status` のハンドラとして設定している。
+
+</details>
+
+ではこの時点で動かしてみよう。`PORT=8000 yarn start` で起動し、`http://localhost:8000/server-status` にアクセスしてみて、`{"loadavg":[0.05908203125,0.029296875,0.048828125]}` のような JSON の文字列が表示されれば成功。
+
+これでサーバーの状態を取得する Web API が完成した。
+
+さて今度は、この JSON の Web API を利用する Ajax のコードを実装していく。  
+まずは HTML を作る。
+
+`views/index.pug` を以下のように編集して表示エリアを作成する。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+   div#block.block
+   button#scaling-button 拡大縮小
+   button#moving-button 移動
++  h1 サーバーステータス
++  h3 ロードアベレージ
++  p#loadavg
+   script(src="/javascripts/bundle.js")
+```
+
+</details>
+
+それに対して今度は Ajax 通信を行うクライアント JavaScript を実装していく。
+
+<details close>
+<summary>app/entry.js</summary>
+
+```diff
+ movingButton.click(() => {
+   block.animate({ 'marginLeft': '500px' }, 500);
+   block.animate({ 'marginLeft': '20px' }, 1000);
+});
++
++const loadavg = $('#loadavg');
++
++setInterval(() => {
++  $.get('/server-status', {}, (data) => {
++    loadavg.text(data.loadavg.toString());
++  });
++}, 10);
+```
+
+- setInterval 関数は、第二引数に与えられた値のミリ秒間隔で、第一引数で渡された関数を実行するという関数。
+- setInterval に渡している無名関数の処理は、GET メソッドで、`/server-status` というパスに、なにもデータを渡さずにアクセスするもの。
+- `$.get()` の 3 番目の引数として渡している関数は、レスポンスが帰ってきた際に実行する無名関数。  
+受け取ったデータが data という引数に渡されるため、そのプロパティの loadavg の配列を取得して文字列に変換し、段落の内部のテキストとして設定している。
+
+</details>
+
+ここまで実装できたら、いつも通り以下を実行して `http://localhost:8000/` にアクセスしてみる。
+
+```bash
+node_modules/.bin/webpack
+# ↑でうまくいかなければ　node node_modules/webpack/bin/webpack.js
+PORT=8000 yarn start
+```
+
+以下のような値が表示されていることが確認できるはず。
+
+```
+サーバーステータス
+ロードアベレージ
+0.1318359375,0.1982421875,0.17626953125
+```
+
+ロードアベレージの値が変化するごとに、この HTML 上の数値も変化していることがわかるだろう。このように、サーバーからのデータを受け取り、動的に HTML コンテンツを変更するのが Ajax 技術である。
+
+### ポーリング
+このようにクライアントからサーバーに対して一定間隔で情報を取得するような実装方法のことを **ポーリング** という。
+
+今回は 10 ミリ秒間隔でアクセスしているクライアントが 1 台だけなので問題ないが、つないでいるユーザーの数が増えた場合に、非常に高い負荷がサーバにかかる。
+
+そのためポーリング間隔は、サーバーの負荷の状況に合わせて見直される必要がある。
+
+<img src="./images/polling.png">
+
+----
+また、Ajax においてもう一つ気を付けなくてはならない制約がある。
+
+### 同一生成元ポリシー
+**同一生成元ポリシー**（Same-Origin Policy）とは、ウェブブラウザのセキュリティ上の考え方で、コンテンツが同一の生成元から提供されているかを確認し、外部からの干渉を防ごうとするポリシーである。
+
+Ajax の通信にはこの同一生成元ポリシーが適用され、生成元（Origin）が異なるリソースにはアクセスできない。
+
+この生成元（Origin）は、
+
+- ホスト
+- スキーム
+- ポート
+
+の　3 種類が一緒かどうかで判定され、今回の場合では
+
+- localhost
+- http
+- 8000
+
+となっている。
+
+Ajax の通信のリクエストは基本的には、同じ生成元、すなわち上記 3 つが一緒である URL にしかアクセスできないようになっている。  
+また、このような同一生成元でない領域へのアクセスのことを **クロスサイト** という。
+
+<img src="./images/cross-site.png">
+
+**クロスサイトのイメージ**
+
+今回の例で言えば Ajax 通信は `http://localhost:8000/javascripts/bundle.js` という JavaScript から発生した通信であるため、 `http://localhost:8000/server-status` へのアクセスは同一生成元ポリシーには反しない。
+
+しかし、もし `http://hoge:8000/server-status` のような別サイトにアクセスしようとすると、サーバーによりアクセスが制限される可能性がある。
+
+なお、HTML のフォームから行う POST のリクエストに関しては、別サイトから実行される可能性があり、それが CSRF 脆弱性の原因となっていた。そのためフォームから行う POST のリクエストでは CSRF トークン（ワンタイムトークン）などを利用し、別サイトからリクエストが行われることを未然に防いでいた。
+
+Ajax の場合はそのようなことがそもそも起こらないように、この同一生成元ポリシーの仕組みが導入されている。
+
+## WebSocket
+Ajax により、サーバーと通信を行って HTML を更新する方法について学んだ。
+しかし、リアルタイム性を追求した場合、短い間隔で Ajax の通信を行うと、サーバーに対して高い負荷がかかるということもわかってきた。
+
+この回ではその問題を解決する WebSocket という技術について学ぶ。これにより、よりリアルタイムなサーバー - クライアント間通信を、負荷をかけずに行うことができるようになる。
+
+<img src="./images/websocket.png">
+
+### WebSocket
+WebSocket とは、Web サーバーとブラウザ（クライアント）の間で利用できる双方向通信の規格。Ajax の通信では、リアルタイム性を求めるためには、短い間隔で HTTP のリクエストを何度もクライアントからサーバーに送らなければならなかった。
+
+そして、そのリクエストのたびに TCP の接続のコストが発生し、同じ HTTP のヘッダも何度も送信しなくてはならなかった。
+
+WebSocket は、このコストの問題の解決案として考えられた。HTTP のリクエストのヘッダ内で WebSocket のリクエストがあると、接続（コネクション）を維持し、双方向の通信が可能な状態を構築する。
+
+過去説明した　Ajax で利用していたサーバーとクライアントの通信は **プル通信** と呼ばれ、つねにクライアントがサーバーに対して情報を要求する構造となっていた。
+
+一方で、WebSocket によるサーバーとクライアントの通信は **プッシュ通信** と呼ばれ、サーバーから任意のタイミングでクライアントに対して情報を送信することもできる通信の構造となっている。
+
+そのため、よりリアルタイムな通信を、少ないコストで実現できるようになっている。  
+ただし WebSocket では、接続を維持したままでないといけないため、再接続の仕組みやサーバーへのアプリケーションのデプロイ、そして大人数がアクセスできるようにするための仕組みなど、特別な工夫も必要となってくる。
+
+### WebSocket を使ってみよう
+WebSocket を利用して、Ajax で実装していたものと同じ、サーバーの状態をクライアントに表示する機能を実装してみる。
+
+#### サーバーサイドで Socket.IO を利用しよう
+今回利用するライブラリは [**Socket.IO**](https://socket.io/) というライブラリである。この Socket.IO は、Node.js で WebSocket を利用するためのライブラリのひとつ。
+
+まずは Socket.IO のインストールを行う。
+
+```bash
+yarn add socket.io@2.1.1 socket.io-client@2.1.1
+```
+
+`socket.io` はサーバー上で利用するモジュール、`socket.io-client` はクライアントで利用できるモジュールである。
+
+インストールができたら、`bin/www` を以下のように実装する。なお、このファイルは、ファイル名末尾に `.js` という拡張子がついていないが、JavaScript のスクリプトである。`yarn start` コマンドにより最初に実行されるのがこのスクリプト。
+
+> Express のディレクトリ構造の説明を再掲する。  
+> `bin/www`: 起動を行うための Node.js のスクリプト。このスクリプトにおいて `app` モジュールが読み込まれる。
+
+<details close>
+<summary>bin/www</summary>
+
+```diff
+   debug('Listening on ' + bind);
+ }
++
++var io = require('socket.io')(server);
++var os = require('os');
++
++function emitServerStatus(socket) {
++  socket.emit('server-status', { loadavg: os.loadavg() });
++  console.log('server-status event emitted.');
++}
++
++io.on('connection', function (socket) {
++  setInterval(emitServerStatus, 10, socket);
++});
+```
+
+</details>
+
+```js
+var io = require('socket.io')(server);
+var os = require('os');
+```
+これらは、Socket.IO のモジュールの読み込みと、os モジュールの読み込み。io というコネクションを表すオブジェクトを [http モジュール](https://nodejs.org/docs/v10.14.2/api/http.html) の http.Server オブジェクトから作成する。
