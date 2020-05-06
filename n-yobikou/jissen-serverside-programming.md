@@ -1923,7 +1923,7 @@ movingButton.click(() => {
 
 </details>
 
-## Ajax
+## § 8. Ajax
 今まで学んできたクライアントサイドの JavaScript では、入出力処理のすべてが HTML の DOM とコンソール を利用して行うものであった。
 
 実はクライアントの JavaScript では HTTP における通信も記述することができる。その中でも、もっとも有名な方法が **Ajax** という技術である。
@@ -2150,7 +2150,7 @@ Ajax の通信のリクエストは基本的には、同じ生成元、すなわ
 
 Ajax の場合はそのようなことがそもそも起こらないように、この同一生成元ポリシーの仕組みが導入されている。
 
-## WebSocket
+## § 9. WebSocket
 Ajax により、サーバーと通信を行って HTML を更新する方法について学んだ。
 しかし、リアルタイム性を追求した場合、短い間隔で Ajax の通信を行うと、サーバーに対して高い負荷がかかるということもわかってきた。
 
@@ -2217,4 +2217,143 @@ yarn add socket.io@2.1.1 socket.io-client@2.1.1
 var io = require('socket.io')(server);
 var os = require('os');
 ```
-これらは、Socket.IO のモジュールの読み込みと、os モジュールの読み込み。io というコネクションを表すオブジェクトを [http モジュール](https://nodejs.org/docs/v10.14.2/api/http.html) の http.Server オブジェクトから作成する。
+これらは、Socket.IO のモジュールの読み込みと、os モジュールの読み込み。io というコネクションを表すオブジェクトを [http モジュール](https://nodejs.org/docs/v10.14.2/api/http.html) の http.Server オブジェクトから作成する（`var server = http.createServer(app);` と定義されている）。
+
+```js
+function emitServerStatus(socket) {
+  socket.emit('server-status', { loadavg: os.loadavg() });
+  console.log('server-status event emitted.');
+}
+```
+
+この `emitServerStatus` 関数は、`server-status` という名前で定義されるイベントを、WebSocket の接続に対して発行する実装。  
+イベント発行時のデータとして、Ajax のときと同様にロードアベレージが `loadavg` というプロパティで配列を持つオブジェクトが渡されるようにデータを受け渡している。
+
+[`socket.emit` 関数](http://socket.io/docs/server-api/#socket#emit(name:string%5B,-%E2%80%A6%5D):socket) は、文字列で定義したイベントを、データとともに発行することができる関数である。
+
+```js
+io.on('connection', function (socket) {
+  setInterval(emitServerStatus, 10, socket);
+});
+```
+
+これは、WebSocket の接続がか確率したとき（`'connection'` というイベントを Stream で受け取ったとき）、setInterval 関数を利用して、10 ミリ秒ごとに emitServerStatus 関数を呼び出すように設定している。  
+なお、emitServerStatus 関数には引数として、[Socket のオブジェクト](http://socket.io/docs/server-api/#socket) が渡るようになっている。
+
+### クライアントサイドで Socket.IO を利用しよう
+クライアントサイドは、今はまだ Ajax でサーバーの状態を問い合わせる仕組みのままになっている。ここで、クライアントサイドの JavaScript を Ajax のものから WebSocket のものに置き換えてみる。
+
+`app/entry.js` を以下のように書き換える。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+ const loadavg = $('#loadavg');
+ 
+-setInterval(() => {
+-  $.get('/server-status', {}, (data) => {
+-    loadavg.text(data.loadavg.toString());
+-  });
+-}, 10);
++import io from 'socket.io-client';
++const socket = io('http://localhost:8000');
++socket.on('server-status', (data) => {
++  loadavg.text(data.loadavg.toString());
++});
+```
+</details>
+
+```js
+import io from 'socket.io-client';
+const socket = io('http://localhost:8000');
+```
+
+上記は、WebSocket のオブジェクトを、`socket.io-client` モジュールから読み込み、`http://localhost:8000` に接続することで作成している。
+
+```js
+socket.on('server-status', (data) => {
+  loadavg.text(data.loadavg.toString());
+});
+```
+
+このコードは、WebSocket の接続上で、`server-status` という文字列で定義されるイベントが発生した場合、そのデータを受け取って、jQuery オブジェクト（=`loadavg`）を利用して段落（`<p>`）の中の文字列を、受け取った文字列で更新する実装となっている。
+
+```bash
+node_modules/.bin/webpack
+# ↑うまくいかなければ node node_modules/webpack/bin/webpack.js
+PORT=8000 yarn start
+```
+
+上記コマンドでクライアントサイドの JavaScript を出力してからサーバーを再起動して、`http://localhost:8000` にアクセスしてみると、ロードアベレージが表示されるはず。
+
+Ajax のときよりも負荷が低くなっているはずである。
+
+> 手元では、Ajax の場合のロードアベレージは `0.7197265625,0.291015625,0.1064453125`、WebSocket の場合のロードアベレージは `0.44580078125,0.349609375,0.171875` となった。
+
+Ajax では 10 ミリ秒というポーリング間隔はクライアント側（`app/entry.js`）で設定していた。しかし、WebSocket のイベントの発行間隔は、サーバー上の Node.js のコード（`bin/www`）に記述することになる。
+
+これがプル通信とプッシュ通信の実装の差になる。
+
+### いろいろな通信方式
+#### プル通信の遅延とプッシュ通信
+**プル通信** は何かしらのイベントがサーバー上で発生した際は、クライアントでそのイベントを受け取るときに、最長でポーリングの間隔分の時間がずれとして発生してしまう（直近プルした直後にイベントが発生したら（しても）、次のプルまでイベント発生に気づかない）。
+
+<img src="./images/pull-communicate.png">
+
+しかし **プッシュ通信** の場合は、最長でも通信時間とサーバーの処理にかかった時間のずれだけで、クライアントでそのイベントを受け取ることが可能。そのため、よりリアルタイム性の求められるサービス、たとえばチャットサービスや仮想コンソール 、ゲームなどのサービスに、この WebSocket は向いていると言える。
+
+<img src="./images/push-communicate.png">
+
+> **Tips: ゲームに用いる通信**
+> また、ゲームの場合は少し特殊で、より高いパフォーマンスが求められるオンラインゲームでは、TCP ではなく UDP (User Datagram Protocol) という形式のプロトコルが使われることが多くなっている。
+> これは TCP が、接続の確立に高いコストをかけ、その内容をチェックするプロトコルであるのに対して、UDP は接続を確立せず、ただデータを送りつける方式であり、高速にデータを送信することができるためである。
+> UDP は信頼性は低いものの、高速にデータのやりとりをすることができる。
+> 特にゲーム内の情報伝達は細切れのコマンド情報であることが多いため、この UDP でも十分にゲームを成立させることができる。
+
+なお、WebSocket でチャットサービスを作る場合、普通に TCP を直に使った通信をしても良いのではないかと思うかもしれない。しかしながら、ここで WebSocket は HTTP のリクエストから派生する、という特性が生きてくる。  
+WebSocket では、HTTP のヘッダで利用するようなセキュリティの機能を利用することができるのである。
+
+認証や認可というような機能と組み合わせて使う場合、ただの TCP よりも、WebSocket のほうが機能を実装しやすいという特性を持っている。
+
+このように Ajax と WebSocket を選択する場合もそうだが、サービス要件によって、どのような方式の通信技術が適切なのかは大きく変わってくる。
+
+**WebSocket の練習**
+
+WebSocket の接続時と切断時に、クライアントの Chrome のデベロッパーツールの Console に「接続しました」と「切断しました」という文字列をそれぞれ表示させてみる。
+
+Socket オブジェクトに対して、`connect` の文字列で定義されるイベントを関しすることで、接続イベントが監視できる。  
+また、`disconnect` の文字列で定義されるイベントを監視することで、切断のイベントを監視することができる。
+
+なお、切断時の動作はサーバーを終了させることで確認することができる。
+
+`app/entry.js` に以下のように変更を加えればよい。
+
+<details close>
+<summary>コード</summary>
+
+```diff
+ import io from 'socket.io-client';
+ const socket = io('http://localhost:8000');
+ socket.on('server-status', (data) => {
+   loadavg.text(data.loadavg.toString());
+ });
++socket.on('connect', () => { console.log('接続しました'); });
++socket.on('disconnect', () => { console.log('切断しました'); });
+```
+
+</details>
+
+サーバーの再起動時は Webpack のコマンドも叩き直すこと。
+
+```bash
+node_modules/.bin/webpack
+PORT=8000 yarn start
+```
+
+以上の変更を加えることで、接続と切断を Chrome のデベロッパーツールの Console で確認できるようになる（`app/entry.js` はクライアントサイド用の JS コードなので、サーバ側のコンソールではなくクライアント側のコンソールに表示される）。  
+ページを開いたタイミングで「接続しました」と表jいされ、サーバーを終了したタイミングで「切断しました」と表示される。
+
+なお、この Socket.IO では自動的に再接続を行うため、ページ側は開きっぱなしにして終了したサーバーを再起動すると、また「接続しました」と表示される。
+
+> 参考: [「10万クライアント環境に耐える高性能」、WebSocketの性能検証で手応え](https://builder.japan.zdnet.com/sp_oracle/35044482/)
