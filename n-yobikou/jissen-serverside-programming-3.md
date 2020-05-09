@@ -1936,7 +1936,7 @@ describe('/schedules', () => {
 
 });
 ```
-<details close>
+</details>
 
 **解説**
 
@@ -1951,3 +1951,1563 @@ describe('/schedules', () => {
 また、`Promise.all` 関数は、 配列で渡された全ての Promise が終了した際に結果を返す、Promise オブジェクトを作成する。  
 なお、空配列が渡された場合も Promise オブジェクトが作成される。
 
+## § 19. 出欠の表示と更新
+ここまでで、予定と出欠表を表示するページが作成された。  
+今度は出欠表を使って自分の出欠を更新できるようにしていこう。
+
+### 出欠表と表示アルゴリズム
+前回までの実装と、HTML へ表示された出欠表は
+
+- 行を、候補
+- 列を、ユーザー名
+
+で構成していた。このとき、出欠のデータをどのように用意すれば、表の内容を表示できるのだろうか。
+
+そもそも、出欠の情報はまだ DB に追加していない。そのため、出欠表の閲覧ユーザーはまずは自分はすべて「欠席」であるという状態で、この出欠表が表示される必要がある。
+
+また、他のユーザーが更新した出欠のデータでも、そのユーザーは特定の候補にだけ出欠を入力する場合が考えられる。  
+入力が行われた一部候補の出欠に関してだけ、情報が保管されている状態である。
+
+以上を考えると、つまり DB 上に情報がなくとも、表示上、出欠データがあるように見せる工夫が必要なのである。
+
+また、テンプレート内で、候補で列をループし、ユーザー名で行をループしている。そこに出欠情報を表示させるにはどのようにすればいいだろうか。
+
+こういう 2 つのキーで参照する情報には、入れ子になった連想配列 Map を利用する。
+
+- 出欠 MapMap（Map の Map）
+    - キーは、ユーザー ID
+    - 値は、出欠 Map
+- 出欠 Map
+    - キーは、候補 ID
+    - 値は、出欠内容
+
+MapMap が用意されていれば ユーザー ID と候補 ID を使って、出欠内容を取得することがでい、テンプレートの候補とユーザーのループの中で値を取得することができる。
+
+では、この出欠データを作る手順をまとめていく。
+
+1. データベースからその予定のすべての出欠を取得する
+1. 出欠 MapMap（キー: ユーザー ID、値：出欠 Map（キー：候補 ID、値：出欠））を作成する
+1. 閲覧ユーザーと出欠に紐づくユーザーからユーザー Map（キー：ユーザー ID、値：ユーザー）を作る
+1. 全ユーザー・全候補で二重ループして、それぞれの朱毛kつの値がない場合には「欠席」を設定する
+
+### 出欠情報の作成
+では実際に `routes/schedules.js` を以下のように実装する。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+ const Schedule = require('../models/schedule');
+ const Candidate = require('../models/candidate');
+ const User = require('../models/user');
++const Availability = require('../models/availability');
+ 
+ router.get('/new', authenticationEnsurer, (req, res, next) => {
+   res.render('new', { user: req.user });
+```
+
+```diff
+         where: { scheduleId: schedule.scheduleId },
+         order: [['"candidateId"', 'ASC']]
+       }).then((candidates) => {
+-        res.render('schedule', {
+-          user: req.user,
+-          schedule: schedule,
+-          candidates: candidates,
+-          users: [req.user]
++        // データベースからその予定の全ての出欠を取得する
++        Availability.findAll({
++          include: [
++            {
++              model: User,
++              attributes: ['userId', 'username']
++            }
++          ],
++          where: { scheduleId: schedule.scheduleId },
++          order: [[User, 'username', 'ASC'], ['"candidateId"', 'ASC']]
++        }).then((availabilities) => {
++          // 出欠 MapMap(キー:ユーザー ID, 値:出欠Map(キー:候補 ID, 値:出欠)) を作成する
++          const availabilityMapMap = new Map(); // key: userId, value: Map(key: candidateId, availability)
++          availabilities.forEach((a) => {
++            const map = availabilityMapMap.get(a.user.userId) || new Map();
++            map.set(a.candidateId, a.availability);
++            availabilityMapMap.set(a.user.userId, map);
++          });
++
++          console.log(availabilityMapMap); // TODO 除去する
++
++          res.render('schedule', {
++            user: req.user,
++            schedule: schedule,
++            candidates: candidates,
++            users: [req.user],
++            availabilityMapMap: availabilityMapMap
++          });
+         });
+       });
+     } else {
+```
+</details>
+
+**解説**
+
+```js
+// データベースからその予定の全ての出欠を取得する
+Availability.findAll({
+  include: [
+    {
+      model: User,
+      attributes: ['userId', 'username']
+    }
+  ],
+  where: { scheduleId: schedule.scheduleId },
+  order: [[User, 'username', 'ASC'], ['"candidateId"', 'ASC']]
+}).then((availabilities) => {
+```
+
+この部分は、予定 ID でしぼりこんだ出欠の取得である（しぼりこみは `where` で行う）。  
+後にユーザー情報を利用するため、ユーザー名もテーブルの結合をして取得してある（`include` の部分）。また、取得順番は、ユーザー名の昇順、候補 ID の昇順で並べている。
+
+```js
+// 出欠 MapMap(キー:ユーザー ID, 値:出欠Map(キー:候補 ID, 値:出欠)) を作成する
+const availabilityMapMap = new Map(); // key: userId, value: Map(key: candidateId, availability)
+availabilities.forEach((a) => {
+  const map = availabilityMapMap.get(a.user.userId) || new Map();
+  map.set(a.candidateId, a.availability);
+  availabilityMapMap.set(a.user.userId, map);
+});
+```
+
+ここで出欠 MapMap を作っている。ここでは、出欠のデータがあったものだけをデータとして入れ子の連想配列の中に保存している。
+
+ここまで実装できたら、サーバーを再起動して `http:/localhost:8000` にアクセス・ログインの後、何かしらの予定を作成し、その予定の内容を表示するページにアクセスしてみよう。
+
+すると、`Map {}` と表示されるはず。これはまだ出欠のレコードが一つもできていないためである。
+
+ここまでうまくいったら次を実装していく。
+
+<details close>
+<summary>routes/schedule.js</summary>
+
+```diff
+         where: { scheduleId: schedule.scheduleId },
+         order: [['"candidateId"', 'ASC']]
+       }).then((candidates) => {
+         // データベースからその予定の全ての出欠を取得する
+         Availability.findAll({
+           include: [
+             {
+               model: User,
+               attributes: ['userId', 'username']
+             }
+           ],
+           where: { scheduleId: schedule.scheduleId },
+           order: [[User, 'username', 'ASC'], ['"candidateId"', 'ASC']]
+         }).then((availabilities) => {
+           // 出欠 MapMap(キー:ユーザー ID, 値:出欠Map(キー:候補 ID, 値:出欠)) を作成する
+           const availabilityMapMap = new Map(); // key: userId, value: Map(key: candidateId, availability)
+           availabilities.forEach((a) => {
+             const map = availabilityMapMap.get(a.user.userId) || new Map();
+             map.set(a.candidateId, a.availability);
+             availabilityMapMap.set(a.user.userId, map);
+           });
+
++          // 閲覧ユーザーと出欠に紐づくユーザーからユーザー Map (キー:ユーザー ID, 値:ユーザー) を作る
++          const userMap = new Map(); // key: userId, value: User
++          userMap.set(parseInt(req.user.id), {
++              isSelf: true,
++              userId: parseInt(req.user.id),
++              username: req.user.username
++          });
++          availabilities.forEach((a) => {
++            userMap.set(a.user.userId, {
++              isSelf: parseInt(req.user.id) === a.user.userId, // 閲覧ユーザー自身であるかを含める
++              userId: a.user.userId,
++              username: a.user.username
++            });
++          });
++
++          // 全ユーザー、全候補で二重ループしてそれぞれの出欠の値がない場合には、「欠席」を設定する
++          const users = Array.from(userMap).map((keyValue) => keyValue[1]);
++          users.forEach((u) => {
++            candidates.forEach((c) => {
++              const map = availabilityMapMap.get(u.userId) || new Map();
++              const a = map.get(c.candidateId) || 0; // デフォルト値は 0 を利用
++              map.set(c.candidateId, a);
++              availabilityMapMap.set(u.userId, map);
++            });
++          });
++
+           console.log(availabilityMapMap); // TODO 除去する
+
+           res.render('schedule', {
+             user: req.user,
+             schedule: schedule,
+             candidates: candidates,
+-            users: [req.user],             
++            users: users,
+             availabilityMapMap: availabilityMapMap
+           });
+         });
+       });
+     } else {
+```
+</details>
+
+**解説**
+
+```js
+// 閲覧ユーザーと出欠に紐づくユーザーからユーザー Map (キー:ユーザー ID, 値:ユーザー) を作る
+const userMap = new Map(); // key: userId, value: User
+userMap.set(parseInt(req.user.id), {
+    isSelf: true,
+    userId: parseInt(req.user.id),
+    username: req.user.username
+});
+availabilities.forEach((a) => {
+  userMap.set(a.user.userId, {
+    isSelf: parseInt(req.user.id) === a.user.userId, // 閲覧ユーザー自身であるかを含める
+    userId: a.user.userId,
+    username: a.user.username
+  });
+});
+```
+
+ここでは、ユーザー Map を作成し、まずはユーザー自身を加えている。  
+さらにその後、出欠のデータを一つでも持っていたユーザーをユーザー Map に含めている。
+
+なおここでは、閲覧ユーザーであるかどうかを示す `isSelf` というフラグも作成している。  
+このフラグは今後、出欠情報を更新する UI を表示させていいかどうかの判断に利用する。
+
+```js
+// 全ユーザー、全候補で二重ループしてそれぞれの出欠の値がない場合には、「欠席」を設定する
+const users = Array.from(userMap).map((keyValue) => keyValue[1]);
+users.forEach((u) => {
+  candidates.forEach((c) => {
+    const map = availabilityMapMap.get(u.userId) || new Map();
+    const a = map.get(c.candidateId) || 0; // デフォルト値は 0 を利用
+    map.set(c.candidateId, a);
+    availabilityMapMap.set(u.userId, map);
+  });
+});
+```
+
+出欠情報を持つ全ユーザー、全候補で二重ループを実行し、出欠データを更新していく。  
+出欠情報が存在しない場合は、デフォルト値の 0 を利用する。  
+この 0 が欠席を表すことになる。
+
+ここまで実装できたら、サーバーを再起動して、何かしら予定を作成し、その予定の内容を表示するページにアクセスしてみよう。すると、
+
+```
+Map { '15885373' => Map { 13 => 0, 14 => 0, 15 => 0 } }
+```
+
+以上のように出欠 MapMap の内容が標準出力に表示されるはず。
+
+### テンプレートに出欠情報を対応させる
+ここまでで出欠情報が用意できたので、次はそれをテンプレートで利用しよう。  
+`views/schedule.pug` を以下のように修正する。
+
+<details close>
+<summary>views/schedule.pug</summary>
+
+```diff
+       tr
+         th #{candidate.candidateName}
+         each user in users
++          - var availability = availabilityMapMap.get(user.userId).get(candidate.candidateId)
++          - var availabilityLabels = ['欠', '？', '出'];
+           td
+-            button 欠席
++            if user.isSelf
++              button #{availabilityLabels[availability]}
++            else
++              p #{availabilityLabels[availability]}
+```
+</details>
+
+出欠の状況に応じて「欠」「？」「出」のいずれかが表示されるようにした。  
+また、閲覧ユーザーの列である場合のみ、button 要素を利用するようにしている。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+             });
+           });
+ 
+-          console.log(availabilityMapMap); // TODO 除去する
+-
+           res.render('schedule', {
+             user: req.user,
+             schedule: schedule,
+```
+
+`routes/schedules.js` から `console.log` は取り除く。
+</details>
+
+### 出欠更新の Web API の実装
+次は、この出欠の更新を行うための Web API を実装する。  
+出欠表から Ajax でこの出欠表の更新が行えるようにするためである。
+
+出欠の更新は Ajax にて以下のパスで行われる設計になっていた。
+
+```
+/schedules/:scheduleId/users/:userId/candidates/:candidateId
+```
+
+これに沿って実装していく。`routes/availabilities.js` を以下のように実装する。
+
+<details close>
+<summary>routes/availabilities.js</summary>
+
+```js
+'use strict';
+const express = require('express');
+const router = express.Router();
+const authenticationEnsurer = require('./authentication-ensurer');
+const Availability = require('../models/availability');
+
+router.post('/:scheduleId/users/:userId/candidates/:candidateId', authenticationEnsurer, (req, res, next) => {
+  const scheduleId = req.params.scheduleId;
+  const userId = req.params.userId;
+  const candidateId = req.params.candidateId;
+  let availability = req.body.availability;
+  availability = availability ? parseInt(availability) : 0;
+
+  Availability.upsert({
+    scheduleId: scheduleId,
+    userId: userId,
+    candidateId: candidateId,
+    availability: availability
+  }).then(() => {
+    res.json({ status: 'OK', availability: availability });
+  });
+});
+
+module.exports = router;
+```
+</details>
+
+以上では、パスから予定 ID、ユーザー ID、候補 ID を受け取り、POST のリクエストに含まれる `availaility` というプロパティで、DB を更新する実装になっている。
+
+もちろん API の利用には認証を求めるようにしておく（`authenticationEnsurer`）。
+
+また、更新後は JSON で `{status: 'OK', availability: ${availability} }` という値が戻るようにしてある。
+
+以上で実装した Router オブジェクトを、Application オブジェクトに設定しておこう。  
+`app.js` を以下のように実装する。
+
+<details close>
+<summary>app.js</summary>
+
+```diff
+ var loginRouter = require('./routes/login');
+ var logoutRouter = require('./routes/logout');
+ var schedulesRouter = require('./routes/schedules');
++var availabilitiesRouter = require('./routes/availabilities');
+ 
+ var app = express();
+```
+
+```diff
+ app.use('/logout', logoutRouter);
+ app.use('/schedules', schedulesRouter));
++app.use('/schedules', availabilitiesRouter);
+ 
+ app.get('/auth/github',
+   passport.authenticate('github', { scope: ['user:email'] }),
+```
+</details>
+
+これで Router オブジェクトが使われるように設定できた。
+
+### 出欠更新のテストの実装
+先ほど実装した Web API がちゃんと実行されるか、テストを実装して確かめる。  
+`test/test.js` を以下のように実装していく。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+ const User = require('../models/user');
+ const Schedule = require('../models/schedule');
+ const Candidate = require('../models/candidate');
++const Availability = require('../models/availability');
+ 
+ describe('/login', () => {
+   before(() => {
+```
+
+```diff
+             .expect(/テスト候補2/)
+             .expect(/テスト候補3/)
+             .expect(200)
+-            .end((err, res) => {
+-              if (err) return done(err);
+-              // テストで作成したデータを削除
+-              const scheduleId = createdSchedulePath.split('/schedules/')[1];
+-              Candidate.findAll({
+-                where: { scheduleId: scheduleId }
+-              }).then((candidates) => {
+-                const promises = candidates.map((c) => { return c.destroy(); });
+-                Promise.all(promises).then(() => {
+-                  Schedule.findByPk(scheduleId).then((s) => { 
+-                    s.destroy().then(() => { 
+-                      done(); 
+-                    });
+-                  });
+-                });
+-              });
+-            });
++            .end((err, res) => { deleteScheduleAggregate(createdSchedulePath.split('/schedules/')[1], done, err);});
+         });
+     });
+   });
+});
++
++describe('/schedules/:scheduleId/users/:userId/candidates/:candidateId', () => {
++  before(() => {
++    passportStub.install(app);
++    passportStub.login({ id: 0, username: 'testuser' });
++  });
++
++  after(() => {
++    passportStub.logout();
++    passportStub.uninstall(app);
++  });
++
++  it('出欠が更新できる', (done) => {
++    User.upsert({ userId: 0, username: 'testuser' }).then(() => {
++      request(app)
++        .post('/schedules')
++        .send({ scheduleName: 'テスト出欠更新予定1', memo: 'テスト出欠更新メモ1', candidates: 'テスト出欠更新候補1' })
++        .end((err, res) => {
++          const createdSchedulePath = res.headers.location;
++          const scheduleId = createdSchedulePath.split('/schedules/')[1];
++          Candidate.findOne({
++            where: { scheduleId: scheduleId }
++          }).then((candidate) => {
++            // 更新がされることをテスト
++            const userId = 0;
++            request(app)
++              .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
++              .send({ availability: 2 }) // 出席に更新
++              .expect('{"status":"OK","availability":2}')
++              .end((err, res) => { deleteScheduleAggregate(scheduleId, done, err); });
++          });
++        });
++    });
++  });
++});
+
++function deleteScheduleAggregate(scheduleId, done, err) {
++  Availability.findAll({
++    where: { scheduleId: scheduleId }
++  }).then((availabilities) => {
++    const promises = availabilities.map((a) => { return a.destroy(); });
++    Promise.all(promises).then(() => {
++      Candidate.findAll({
++        where: { scheduleId: scheduleId }
++      }).then((candidates) => {
++        const promises = candidates.map((c) => { return c.destroy(); });
++        Promise.all(promises).then(() => {
++          Schedule.findByPk(scheduleId).then((s) => { 
++            s.destroy().then(() => { 
++              if (err) return done(err);
++              done(); 
++            });
++          });
++        });
++      });
++    });
++  });
++}
+```
+</details>
+
+今回新たに `deleteScheduleAggregate` という関数を用意して、予定、そこに紐づく出欠・候補を削除するためのメソッドを切り出して、「予定が作成でき、表示される」と「出欠が更新できる」の両方でテストの最後に実行できるように実装した。
+
+Aggregate は集約という意味の英単語であるが、特定の親のデータモデルが他のデータモデルを所有するという関係を持っていることを表したもの。
+
+```js
+.end((err, res) => { deleteScheduleAggregate(createdSchedulePath.split('/schedules/')[1], done);});
+```
+
+以上の実装で、テストで作成した予定と、そこに紐づく情報を削除するメソッドを呼び出している。引数としては `scheduleId` と `done` の 2 つが渡されている。
+
+追加された `deleteScheduleAggregate` 関数を見てみよう。
+
+```js
+function deleteScheduleAggregate(scheduleId, done, err) {
+  Availability.findAll({
+    where: { scheduleId: scheduleId }
+  }).then((availabilities) => {
+    const promises = availabilities.map((a) => { return a.destroy(); });
+    Promise.all(promises).then(() => {
+      Candidate.findAll({
+        where: { scheduleId: scheduleId }
+      }).then((candidates) => {
+        const promises = candidates.map((c) => { return c.destroy(); });
+        Promise.all(promises).then(() => {
+          Schedule.findByPk(scheduleId).then((s) => { 
+            s.destroy().then(() => { 
+              if (err) return done(err);
+              done(); 
+            });
+          });
+        });
+      });
+    });
+  });
+}
+```
+
+この関数では、まず最初に `scheduleId` を元にすべての出欠を取得している。  
+その後、そのすべてを `destroy` 関数で削除し、その結果の `Promise` オブジェクトの配列を取得する。
+
+その後は候補を削除し、同様にそのすべての候補が削除された結果として渡される Promise オブジェクトの配列を同様に一つの Promise にし、候補が全て削除されたら、さらに予定を削除するように実装している。
+
+> 削除の順番まとめ：availabilities（出欠）-> candidates（候補）-> schedules（予定）
+
+なお、このような親子関係のあるデータの削除方法にはコツがある。  
+基本的には子ども側のデータから消していくことで、DB の処理が仮に途中で止まってしまっても、データが不正な状況を防ぐことができるのである。
+
+そこで、ここでも最も子供のデータである「出欠」を消し、次にその親のデータの「候補」を消し、最後に「予定」を消す、とすることで、データが不正になる問題にたいしょ　している。
+
+なおここでは `const` で `promises` という変数を二度宣言している。  
+`const` による変数宣言では `{` と `}` で囲まれた **スコープ** と呼ばれる範囲を考え、同名の変数がある場合、変数の利用と同じスコープにある宣言が優先して利用されるようになっている。
+
+そして、次は「出欠が更新できる」のテスト。
+
+```js
+describe('/schedules/:scheduleId/users/:userId/candidates/:candidateId', () => {
+  before(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
+
+  after(() => {
+    passportStub.logout();
+    passportStub.uninstall(app);
+  });
+```
+
+以上の実装は、利用するパスの記述と、テストの実施の際にログインとログアウトを行う実装。
+
+```js
+  it('出欠が更新できる', (done) => {
+    User.upsert({ userId: 0, username: 'testuser' }).then(() => {
+      request(app)
+        .post('/schedules')
+        .send({ scheduleName: 'テスト出欠更新予定1', memo: 'テスト出欠更新メモ1', candidates: 'テスト出欠更新候補1' })
+        .end((err, res) => {
+          const createdSchedulePath = res.headers.location;
+          const scheduleId = createdSchedulePath.split('/schedules/')[1];
+          Candidate.findOne({
+            where: { scheduleId: scheduleId }
+          }).then((candidate) => {
+            // 更新がされることをテスト
+            const userId = 0;
+            request(app)
+              .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
+              .send({ availability: 2 }) // 出席に更新
+              .expect('{"status":"OK","availability":2}')
+              .end((err, res) => { deleteScheduleAggregate(scheduleId, done, err); });
+          });
+        });
+    });
+  });
+```
+
+上記では、まずは `/schedules` に POST を行い「予定」と「候補」を作成する。その後、
+
+```js
+Candidate.findOne({
+  where: { scheduleId: scheduleId }
+}).then((candidate) => {
+```
+
+以上の部分で「予定」に関連する候補を取得し、その「候補」に対して、POST で Web API に対して欠席を出席に更新している。
+
+そしてそのリクエストのレスポンスに `'{"status":"OK","availability":2}'` が含まれるかどうかをテストしている。
+
+以上のテストが実装できたら、`yarn test` でテストを実行する。テストがすべて通ればこの Web API の実装は問題なく行えていることがわかる。
+
+----
+ここまでの「出欠が変更できる」のテストは、Web API のインターフェースが返した結果をそのまま信用して結果を判断している。  
+本当に DB に保存されたかどうかはテストされていない。  
+本当に DB に存在するかどうかのテストも追加しよう。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+'use strict';
+ const request = require('supertest');
++const assert = require('assert');
+ const app = require('../app');
+ const passportStub = require('passport-stub');
+ const User = require('../models/user');
+```
+
+```diff
+               .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
+               .send({ availability: 2 }) // 出席に更新
+               .expect('{"status":"OK","availability":2}')
+-              .end((err, res) => { deleteScheduleAggregate(scheduleId, done, err); });
++              .end((err, res) => {
++                Availability.findAll({
++                  where: { scheduleId: scheduleId }
++                }).then((availabilities) => {
++                  assert.equal(availabilities.length, 1);
++                  assert.equal(availabilities[0].availability, 2);
++                  deleteScheduleAggregate(scheduleId, done, err);
++                });
++              });
+           });
+         });
+     });
+```
+</details>
+
+以上のように記述することで、出欠更新のリクエストを実行した後、 データベースの値を取得して、その内容をテストすることができる。  
+予定に関連する出欠情報がひとつあることと、その内容が更新された `2` であることをテストしている。
+
+`Availability.findAll` 関数はデータベースから where で条件を指定した全ての出欠を取得する。  
+また結果オブジェクトの `then` 関数を呼び出すことで、そこで渡す無名関数の引数 `availabilities` には、 出欠のモデルである `models/availability.js` で定義したモデルの配列が渡される。
+
+よってここでは、 `availabilities` の配列の長さを検証し、その内容も検証する実装を `assert` モジュールを利用して書いている。
+
+## § 20. コメントの表示と更新
+前回までで Web API を利用した出欠の更新ができるようになった。  
+今度はこれを Ajax でクライアントの JavaScript から出欠の更新を利用できるようにしていく。
+
+すでに習ったクライアントサイドのフレームワークである webpack と DOM 操作と Ajax のライブラリである jQuery を 利用して実装していく。
+
+また、出欠の更新が実装できたら、同じ Ajax の仕組みを利用して、 予定に対するコメントの更新も行えるようにしていく。
+
+### Ajax による出欠の更新
+すでに、出欠表には「欠」というラベルのボタンが表示されるようになっているため、そのボタンを押した時に、
+
+- 「欠」ならば「？」に更新
+- 「？」ならば「出」に更新
+- 「出」ならば「欠」に更新
+
+という挙動となるように実装していく。
+
+まずは webpack と babel、そして jQuery をインストールする。
+
+```bash
+yarn add webpack@4.26.1 webpack-cli@3.1.2 @babel/core@7.1.6 @babel/preset-env@7.1.6 babel-loader@8.0.4 --dev
+yarn add jquery@3.4.1
+```
+
+これでインストールを行い、以下のコマンドで必要なディレクトリとファイルを作成する。
+
+```bash
+touch webpack.config.js
+mkdir app
+echo "'use strict';" > app/entry.js
+mkdir public/javascripts
+```
+
+また、`webpack.config.js` を以下のように設定しよう。
+
+<details close>
+<summary>webpack.config.js</summary>
+
+```js
+module.exports = {
+  context: __dirname + '/app',
+  mode: 'none',
+  entry: './entry',
+  output: {
+    path: __dirname + '/public/javascripts',
+    filename: 'bundle.js'
+  },
+  module: {
+    rules: [{
+      test: /\.js$/,
+      exclude: /node_modules/,
+      use: {
+        loader: 'babel-loader',
+        options: {
+          presets: ['@babel/preset-env']
+        }
+      }
+    }]
+  }
+};
+```
+
+</details>
+
+以上を実装して準備ができたら以下を実行して、クライアント用の `public/javascripts/bundle.js` ファイルを作成する。
+
+```bash
+node_modules/.bin/webpack
+# 上記でエラーが出た時は代わりに以下
+# node node_modules/webpack/bin/webpack.js
+```
+
+次に、HTML からこの JavaScript を利用できるようにする。  
+すべての HTML で共通して利用できるように `views/layout.pug` で以下のように実装してしまおう。
+
+```diff
+     link(rel='stylesheet', href='/stylesheets/style.css')
+   body
+     block content
++    script(src="/javascripts/bundle.js")
+```
+body 要素の最後に script 要素を追記している。 これで `public/javascripts/bundle.js` が全てのページで読み込まれるようになる。
+
+そして、今度は出欠ボタンのオブジェクトを取得できるように、 出欠表を表示しているテンプレート `views/schedule.pug` にも以下のように変更をいれる。
+
+<details close>
+<summary>views/schedule.pug</summary>
+
+```diff
+           - var availabilityLabels = ['欠', '？', '出'];
+           td
+             if user.isSelf
+-              button #{availabilityLabels[availability]}
++              button(
++                data-schedule-id=schedule.scheduleId
++                data-user-id=user.userId
++                data-candidate-id=candidate.candidateId
++                data-availability=availability).availability-toggle-button #{availabilityLabels[availability]}
+             else
+               p #{availabilityLabels[availability]}
+```
+</details>
+
+`button` 要素に `class` を設定した。  
+また、`data-` で始まる名前の属性を設定して、Ajax での通信に利用できるようにしている。
+
+この `data-*` 属性は、HTML の要素に独自のデータを保有させたい場合に利用する属性となっている。  
+ここでは、
+
+- 予定 ID
+- ユーザー ID
+- 候補 ID
+- 出欠
+
+これらの情報を button 要素の中に含まれるようにしている。
+
+ではこの button 要素をクリックした際に Web API にアクセスして、出欠を更新するように実装しよう。
+
+`app/entry.js` を以下のように実装する。
+
+<details close>
+<summary>app/entry.js</summary>
+
+```js
+'use strict';
+import $ from 'jquery';
+
+$('.availability-toggle-button').each((i, e) => {
+  const button = $(e);
+  button.click(() => {
+    const scheduleId = button.data('schedule-id');
+    const userId = button.data('user-id');
+    const candidateId = button.data('candidate-id');
+    const availability = parseInt(button.data('availability'));
+    const nextAvailability = (availability + 1) % 3;
+    $.post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidateId}`,
+      { availability: nextAvailability },
+      (data) => {
+        button.data('availability', data.availability);
+        const availabilityLabels = ['欠', '？', '出'];
+        button.text(availabilityLabels[data.availability]);
+      });
+  });
+});
+```
+</details>
+
+すべての出欠ボタンに対して、クリックすることで出欠状態の更新が Web API を通じて実行されるように実装してある。
+
+```js
+$('.availability-toggle-button').each((i, e) => {
+```
+
+この実装は、jQuery を利用して、 `availability-toggle-button` の `class` が 設定されている要素をセレクタで取得している。  
+そして `each` 関数で、各要素に対して、 引数 `i` は順番、 引数 `e` は HTML 要素が渡される関数を実行している。
+
+```js
+const button = $(e);
+button.click(() => {
+```
+
+`$(e)` で、 ボタン要素の jQuery オブジェクトを取得し、そのボタンがクリックした際の関数を記述している。
+
+```js
+const scheduleId = button.data('schedule-id');
+const userId = button.data('user-id');
+const candidateId = button.data('candidate-id');
+const availability = parseInt(button.data('availability'));
+const nextAvailability = (availability + 1) % 3;
+```
+
+以上で、 jQuery の `data` 関数を使用して `data-*` 属性を取得することで、
+
+- 予定 ID
+- ユーザー ID
+- 候補 ID
+- 出欠
+
+を取得している。また、
+
+- 次の出欠の数値
+
+も計算している。 0 → 1 → 2 → 0 → 1 → 2 と循環させたいため、 ここでは 1 を足して 3 の剰余を次の出欠の数値としている。
+
+なお、 `availability` はここで数値の計算をしたいため、 `parseInt` 関数を利用して文字列から数値に変換している。
+
+```js
+$.post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidateId}`,
+  { availability: nextAvailability },
+  (data) => {
+    button.data('availability', data.availability);
+    const availabilityLabels = ['欠', '？', '出'];
+    button.text(availabilityLabels[data.availability]);
+  });
+```
+
+以上は出欠更新の Web API の呼び出しと、実行結果を受け取って `button` 要素の、 `data-*` 属性を更新し、ボタンのラベルを更新している。
+
+これで実装できたので、実際に動かしてみよう。
+
+```bash
+node_modules/.bin/webpack
+PORT=8000 yarn start
+```
+
+予定のページに進んで、出欠ボタンをクリックするたびにボタンの文字が変わり、サーバー側のコンソールでは UPSERT の SQL が発行されれば成功。
+
+これで出欠表の部分の機能は完成。
+
+### コメントの表示の機能
+同様に、予定に対してユーザーが行う湖面tのに対しても、表示と更新の機能を実装していこう。
+
+さっそく出欠表の最後の行に、それぞれのユーザーのコメントが表示できるように実装してみよう。
+
+まずはテンプレートにコメントを表示できるようにする。  
+テンプレートに、キーをユーザー ID、値をコメントとした連想配列を渡せばよい。
+
+`routes/schedules.js` を以下のように実装する。
+
+<details close>
+<summary>routes.schedules.js</summary>
+
+
+```diff
+ const Candidate = require('../models/candidate');
+ const User = require('../models/user');
+ const Availability = require('../models/availability');
++const Comment = require('../models/comment');
+ 
+ router.get('/new', authenticationEnsurer, (req, res, next) => {
+   res.render('new', { user: req.user });
+```
+
+```diff
+             });
+           });
+ 
+-          res.render('schedule', {
+-            user: req.user,
+-            schedule: schedule,
+-            candidates: candidates,
+-            users: users,
+-            availabilityMapMap: availabilityMapMap
++          // コメント取得
++          Comment.findAll({
++            where: { scheduleId: schedule.scheduleId }
++          }).then((comments) => {
++            const commentMap = new Map();  // key: userId, value: comment
++            comments.forEach((comment) => {
++              commentMap.set(comment.userId, comment.comment);
++            });
++            res.render('schedule', {
++              user: req.user,
++              schedule: schedule,
++              candidates: candidates,
++              users: users,
++              availabilityMapMap: availabilityMapMap,
++              commentMap: commentMap
++            });
+           });
+         });
+       });
+```
+
+以上で、 予定 ID でしぼりこんで取得される予定に関する、全てのコメントを取得している。  
+その後、連想配列 `commentMap` に格納し、テンプレートに `commentMap` というプロパティ名で割り当ててテンプレートを描画している。
+</details>
+
+ここまできたら、サーバーを再起動してアクセス・ログインし、何かしらの予定の出欠表を表示させてみよう。
+
+まだコメントのデータはないので、ここはとりあえず以下のように、コメントを取得するための SQL が実行できていることだけを確認しよう。
+
+```sql
+Executing (default): SELECT "scheduleId", "userId", "comment" FROM "comments" AS "comments" WHERE "comments"."scheduleId" = '8c321079-bc36-4e43-b151-167f6162fb7b';
+```
+
+### コメントの更新の Web API の実装
+テンプレートに受け渡す部分は、完全には確認できないので途中までの実装として、ここからは、 コメントを更新するための Web API を作ってみよう。
+
+ほとんど出欠の更新の時に書いた実装と同じ。最初に決めた設計では、
+
+```
+/schedules/:scheduleId/users/:userId/comments
+```
+
+以上のパスでこの Web API が使える設計になっていた。  
+では、 `routes/comments.js` を以下のように実装する。
+
+<details close>
+<summary>routes/comments.js</summary>
+
+```js
+'use strict';
+const express = require('express');
+const router = express.Router();
+const authenticationEnsurer = require('./authentication-ensurer');
+const Comment = require('../models/comment');
+
+router.post('/:scheduleId/users/:userId/comments', authenticationEnsurer, (req, res, next) => {
+  const scheduleId = req.params.scheduleId;
+  const userId = req.params.userId;
+  const comment = req.body.comment;
+
+  Comment.upsert({
+    scheduleId: scheduleId,
+    userId: userId,
+    comment: comment.slice(0, 255)
+  }).then(() => {
+    res.json({ status: 'OK', comment: comment });
+  });
+});
+
+module.exports = router;
+```
+</details>
+
+予定 ID、ユーザー ID、コメントを body から `comment` というプロパティ名で取得し、 Comment のデータモデルを利用して、データベースに UPSERT を実施している。  
+また、コメントの内容だけは、 255 文字以内になるように `.slice()` で切り取っている。
+
+次にこの Router オブジェクトを Application オブジェクトに登録する。
+`app.js` を以下のように実装します。
+
+<details close>
+<summary>app.js</summary>
+
+```diff
+ var logoutRouter = require('./routes/logout');
+ var schedulesRouter = require('./routes/schedules');
+ var availabilitiesRouter = require('./routes/availabilities');
++var commentsRouter = require('./routes/comments');
+ 
+ var app = express();
+ app.use(helmet());
+```
+
+```diff
+ app.use('/logout', logoutRouter);
+ app.use('/schedules', schedulesRouter);
+ app.use('/schedules', availabilitiesRouter);
++app.use('/schedules', commentsRouter);
+ 
+ app.get('/auth/github',
+   passport.authenticate('github', { scope: ['user:email'] }),
+```
+</details>
+
+そして、このコメントが更新できるかどうかのテストコードを書いてみよう。  
+`test/test.js` に以下のテストを追記する。  
+「出欠が更新できる」の下にこのテストを書き足してしまおう。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+ const Schedule = require('../models/schedule');
+ const Candidate = require('../models/candidate');
+ const Availability = require('../models/availability');
++const Comment = require('../models/comment');
+ 
+ describe('/login', () => {
+   before(() => {
+```
+
+```diff
+   });
+ });
+ 
++describe('/schedules/:scheduleId/users/:userId/comments', () => {
++  before(() => {
++    passportStub.install(app);
++    passportStub.login({ id: 0, username: 'testuser' });
++  });
++
++  after(() => {
++    passportStub.logout();
++    passportStub.uninstall(app);
++  });
++
++  it('コメントが更新できる', (done) => {
++    User.upsert({ userId: 0, username: 'testuser' }).then(() => {
++      request(app)
++        .post('/schedules')
++        .send({ scheduleName: 'テストコメント更新予定1', memo: 'テストコメント更新メモ1', candidates: 'テストコメント更新候補1' })
++        .end((err, res) => {
++          const createdSchedulePath = res.headers.location;
++          const scheduleId = createdSchedulePath.split('/schedules/')[1];
++          // 更新がされることをテスト
++          const userId = 0;
++          request(app)
++            .post(`/schedules/${scheduleId}/users/${userId}/comments`)
++            .send({ comment: 'testcomment' })
++            .expect('{"status":"OK","comment":"testcomment"}')
++            .end((err, res) => {
++              Comment.findAll({
++                where: { scheduleId: scheduleId }
++              }).then((comments) => {
++                assert.equal(comments.length, 1);
++                assert.equal(comments[0].comment, 'testcomment');
++                deleteScheduleAggregate(scheduleId, done, err);
++              });
++            });
++        });
++    });
++  });
++});
++
+ function deleteScheduleAggregate(scheduleId, done, err) {
++  const promiseCommentDestroy = Comment.findAll({
++    where: { scheduleId: scheduleId }
++  }).then((comments) => { comments.map((c) => { return c.destroy(); });});
++
+   Availability.findAll({
+     where: { scheduleId: scheduleId }
+   }).then((availabilities) => {
+```
+</details>
+
+以上で、コメントを Web API を利用して予定のコメントを更新し、 結果として更新されたコメントが取得されることと、データベースに実際に保存されていることをテストしている。  
+コメントの内容が、 `testcomment` であることには注意が必要だが、 処理や構造は、出欠更新のテストとほとんど同じ内容となっている。
+
+```js
+Comment.findAll({
+  where: { scheduleId: scheduleId }
+}).then((comments) => { comments.map((c) => { return c.destroy(); });});
+```
+
+以上は、 `deleteScheduleAggregate` 関数に新たに追加された、予定に関連するコメントの削除処理である。  
+厳密には、このコメントを削除し、さらに出欠、候補が全て削除された後に 予定を削除するべきだが、ここではコードを簡単に実装するために、コメントだけを独立して削除している。  
+そのためテストの実行状況によっては、予定が存在しないコメントが残ってしまう可能性がある。これはあとで修正を行う。
+
+ではテストを実行しよう。`yarn test` でテストの通過を確認でき、SQL も
+
+```
+Executing (default): CREATE OR REPLACE FUNCTION pg_temp.sequelize_upsert() RETURNS integer AS $func$ BEGIN INSERT INTO "comments" ("scheduleId","userId","comment") VALUES ('59e32c9f-87cf-4a9c-a07a-1aea2ccfdbb8','0','testcomment'); RETURN 1; EXCEPTION WHEN unique_violation THEN UPDATE "comments" SET "scheduleId"='59e32c9f-87cf-4a9c-a07a-1aea2ccfdbb8',"userId"='0',"comment"='testcomment' WHERE (("scheduleId" = '59e32c9f-87cf-4a9c-a07a-1aea2ccfdbb8' AND "userId" = '0')); RETURN 2; END; $func$ LANGUAGE plpgsql; SELECT * FROM pg_temp.sequelize_upsert();
+```
+
+```
+Executing (default): DELETE FROM "comments" WHERE ("scheduleId","userId") IN (SELECT "scheduleId","userId" FROM "comments" WHERE "scheduleId" = '59e32c9f-87cf-4a9c-a07a-1aea2ccfdbb8' AND "userId" = 0 LIMIT 1)
+```
+
+以上の二つ（それぞれコメントの追加更新にかかわる SQL とコメントの削除に関わる SQL）が表示されていれば問題ない。  
+これで、コメント更新の Web API が完成。
+
+### Ajax によるコメントの更新
+ではこの回の最後に、コメントの更新の UI も加えてしまおう。  
+まずは `views/schedule.pug` を以下のように編集する。
+
+<details close>
+<summary>views/schedule.pug</summary>
+
+```diff
+ extends layout
+ 
+ block content
+   h4 #{schedule.scheduleName}
+   p(style="white-space:pre;") #{schedule.memo}
+   p 作成者: #{schedule.user.username}
+   h3 出欠表
+   table
+     tr
+       th 予定
+       each user in users
+         th #{user.username}
+     each candidate in candidates
+       tr
+         th #{candidate.candidateName}
+         each user in users
+           - var availability = availabilityMapMap.get(user.userId).get(candidate.candidateId)
+           - var availabilityLabels = ['欠', '？', '出'];
+           td
+             if user.isSelf
+               button
+                 data-schedule-id="#{schedule.scheduleId}"
+                 data-user-id=user.userId
+                 data-candidate-id=candidate.candidateId
+                 data-availability=availability).availability-toggle-button #{availabilityLabels[availability]}
+             else
+               p #{availabilityLabels[availability]}
++    tr
++      th コメント
++      each user in users
++        if user.isSelf
++          td
++            p#self-comment #{commentMap.get(user.userId)}
++            button(
++              data-schedule-id=schedule.scheduleId
++              data-user-id=user.userId)#self-comment-button 編集
++        else
++          td
++            p #{commentMap.get(user.userId)}
+```
+</details>
+
+コメント行を出欠表の末尾につけて、閲覧者自体のコメントの下には編集ボタンを配置した。  
+`button` 要素には、 `data-*` 属性のほか、 id として、 `self-comment-button` をつけてある。
+
+加えてコメント自体を表示する段落の p 要素にも、`self-comment` という id をつけた。  
+class でなく id を利用したのは、基本的にこのページには自身のコメントは一つしかないため。
+
+次にこの HTML に合わせて、 `app/entry.js` を編集する。
+
+<details close>
+<summary>app/entry.js</summary>
+
+```diff
+         button.text(availabilityLabels[data.availability]);
+       });
+   });
+ });
++
++const buttonSelfComment = $('#self-comment-button');
++buttonSelfComment.click(() => {
++  const scheduleId = buttonSelfComment.data('schedule-id');
++  const userId = buttonSelfComment.data('user-id');
++  const comment = prompt('コメントを255文字以内で入力してください。');
++  if (comment) {
++    $.post(`/schedules/${scheduleId}/users/${userId}/comments`,
++      { comment: comment },
++      (data) => {
++        $('#self-comment').text(data.comment);
++      });
++  }
++});
+```
+</details>
+
+基本的に出欠更新の処理と同じだが、 `prompt` 関数を利用してコメントを入力できるようにしている。
+
+実際に動かしてみよう。
+
+```bash
+node_modules/.bin/webpack
+PORT=8000 yarn start
+```
+
+以上のコマンドを実行して JavaScript を出力してからサーバーを起動する。  
+予定に対してコメントが付けられるかどうかを試してみよう。編集ボタンを押して、ダイアログに入力したコメントが反映され、 再読み込みをしてもそのコメントが表示されれば、全ての実装がうまくいっている。
+
+### Promise チェーンを利用した書き直し
+すでに Promise の then 関数について学んだが、ここまでは非同期の処理の結果を引数に持つ関数を then に渡して結果を利用することしか紹介していなかった。
+
+しかし、この then 関数の引数に渡す関数では、return で値を返すことができる。  
+また仮にその return で返す値が Promise であっても問題なく処理を行ってくれるという特徴を持っている。
+
+ここで簡単な実装例を紹介しよう。
+
+```js
+new Promise((resolve) => {
+  resolve(2);
+}).then((v1) => { // v1 は 2
+  new Promise((resolve) => {
+    resolve(v1 * 3);
+  }).then((v2) => { // v2 は 6
+    new Promise((resolve) => {
+      resolve(v2 * 4);
+    }).then((v3) => { // v3 は 24
+      console.log(v3); // 24 が出力される
+    });
+  });
+});
+```
+
+Promise オブジェクトは、`new` で新しくオブジェクトを作成し、その際の引数に resolve 関数という非同期の結果を確定させる関数を呼び出すことで作成できる。
+
+```js
+new Promise((resolve) => {
+  resolve(2);
+})
+```
+
+以上の実装は、結果が 2 となる Promise オブジェクトを表している。
+
+今までの書き方では `then` をつなげて書いていたため、深い入れ子構造の then 関数の呼び出しとなっていた。そのため、
+
+```js
+}).then((v1) => { // v1 は 2
+  new Promise((resolve) => {
+    resolve(v1 * 3);
+  }).then((v2) => { // v2 は 6
+    new Promise((resolve) => {
+      resolve(v2 * 4);
+    }).then((v3) => { // v3 は 24
+      console.log(v3); // 24 が出力される
+    });
+```
+
+このような深い `then` の入れ子構造になる。
+
+この例では、Promise オブジェクトが 3 回発生するため、3 つの入れ子構造になった結果、24 が標準出力に出力される。
+
+これを then 関数に渡す関数内で return を利用すると、以下のように書き直せる。
+
+```js
+new Promise((resolve) => {
+  resolve(2);
+}).then((v1) => { // v1 は 2
+  return new Promise((resolve) => {
+    resolve(v1 * 3);
+  });
+}).then((v2) => { // v2 は 6
+  return new Promise((resolve) => {
+    resolve(v2 * 4);
+  });
+}).then((v3) => { // v3 は 24
+  console.log(v3); // 24 が出力される
+});
+```
+
+以上はまったく同じ処理だが、return で Promise オブジェクトを返すことで、次の then 関数の引数では、その結果をそのまま受け取ることができる。
+
+ではこのテクニックを使っていくつか、3 階層以上の深い入れ子になってしまった Promise の then 関数を書き直してみよう。
+
+最初に、`test/test.js` の deleteScheduleAggregate 関数を書き直す。
+
+<details close>
+<summary>test/test.js</summary>
+
+```js
+function deleteScheduleAggregate(scheduleId, done, err) {
+  const promiseCommentDestroy = Comment.findAll({
+    where: { scheduleId: scheduleId }
+  }).then((comments) => {
+    return Promise.all(comments.map((c) => { return c.destroy(); }));
+  });
+
+  Availability.findAll({
+    where: { scheduleId: scheduleId }
+  }).then((availabilities) => {
+    const promises = availabilities.map((a) => { return a.destroy(); });
+    return Promise.all(promises);
+  }).then(() => {
+    return Candidate.findAll({
+      where: { scheduleId: scheduleId }
+    });
+  }).then((candidates) => {
+    const promises = candidates.map((c) => { return c.destroy(); });
+    promises.push(promiseCommentDestroy);
+    return Promise.all(promises);
+  }).then(() => {
+    return Schedule.findByPk(scheduleId).then((s) => { return s.destroy(); });
+  }).then(() => {
+    if (err) return done(err);
+    done();
+  });
+}
+```
+</details>
+
+深かった入れ子が解消された。
+まず最初に、
+
+```js
+const promiseCommentDestroy = Comment.findAll({
+  where: { scheduleId: scheduleId }
+}).then((comments) => {
+  return Promise.all(comments.map((c) => { return c.destroy(); }));
+});
+```
+
+ここでコメントが削除された Promise オブジェクトを作成している。
+その後、
+
+```js
+const promises = availabilities.map((a) => { return a.destroy(); });
+return Promise.all(promises);
+```
+
+then 関数の中で、全ての出欠の削除の結果をあらわす Promise オブジェクトを return で返している。
+
+その後は、
+
+```js
+return Candidate.findAll({
+  where: { scheduleId: scheduleId }
+});
+```
+
+全ての候補が取得できたことの Promise オブジェクトを返し、
+
+```js
+const promises = candidates.map((c) => { return c.destroy(); });
+promises.push(promiseCommentDestroy);
+return Promise.all(promises);
+```
+
+ここで、全ての候補が削除され、かつ、全てのコメントが削除されたことを示す Promise オブジェクトを作成して return 句で返している。
+
+このようにして入れ子の形をチェインの形に書き直すことができる。
+
+なお、先ほどの実装ではコメントが削除されずに残ってしまう可能性があったが、 今回の実装ではそのようなことがないように改善されている。
+
+このように、処理結果は変えずに、 処理内容を改善したりコードを扱いやすくすることを **リファクタリング** という。
+
+ではテストを実行してみよう。
+
+`yarn test` でテストを実行して、`6 passing` と表示されてテストが無事成功し、
+
+```sql
+DELETE FROM "availabilities"
+DELETE FROM "comments"
+DELETE FROM "candidates"
+DELETE FROM "schedules"
+```
+
+これらで始まる削除 SQL が全て実行されていればリファクタリングは成功。
+
+次は routes/schedules.js の /:scheduleId の GET のハンドラをリファクタリングしてみよう。
+以下のように書き換えることができる。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```js
+router.get('/:scheduleId', authenticationEnsurer, (req, res, next) => {
+  let storedSchedule = null;
+  let storedCandidates = null;
+  Schedule.findOne({
+    include: [
+      {
+        model: User,
+        attributes: ['userId', 'username']
+      }],
+    where: {
+      scheduleId: req.params.scheduleId
+    },
+    order: [['"updatedAt"', 'DESC']]
+  }).then((schedule) => {
+    if (schedule) {
+      storedSchedule = schedule;
+      return Candidate.findAll({
+        where: { scheduleId: schedule.scheduleId },
+        order: [['"candidateId"', 'ASC']]
+      });
+    } else {
+      const err = new Error('指定された予定は見つかりません');
+      err.status = 404;
+      next(err);
+    }
+  }).then((candidates) => {
+    // データベースからその予定の全ての出欠を取得する
+    storedCandidates = candidates;
+    return Availability.findAll({
+      include: [
+        {
+          model: User,
+          attributes: ['userId', 'username']
+        }
+      ],
+      where: { scheduleId: storedSchedule.scheduleId },
+      order: [[User, '"username"', 'ASC'], ['"candidateId"', 'ASC']]
+    });
+  }).then((availabilities) => {
+    // 出欠 MapMap(キー:ユーザー ID, 値:出欠Map(キー:候補 ID, 値:出欠)) を作成する
+    const availabilityMapMap = new Map(); // key: userId, value: Map(key: candidateId, availability)
+    availabilities.forEach((a) => {
+      const map = availabilityMapMap.get(a.user.userId) || new Map();
+      map.set(a.candidateId, a.availability);
+      availabilityMapMap.set(a.user.userId, map);
+    });
+
+    // 閲覧ユーザーと出欠に紐づくユーザーからユーザー Map (キー:ユーザー ID, 値:ユーザー) を作る
+    const userMap = new Map(); // key: userId, value: User
+    userMap.set(parseInt(req.user.id), {
+      isSelf: true,
+      userId: parseInt(req.user.id),
+      username: req.user.username
+    });
+    availabilities.forEach((a) => {
+      userMap.set(a.user.userId, {
+        isSelf: parseInt(req.user.id) === a.user.userId, // 閲覧ユーザー自身であるかを含める
+        userId: a.user.userId,
+        username: a.user.username
+      });
+    });
+
+    // 全ユーザー、全候補で二重ループしてそれぞれの出欠の値がない場合には、「欠席」を設定する
+    const users = Array.from(userMap).map((keyValue) => keyValue[1]);
+    users.forEach((u) => {
+      storedCandidates.forEach((c) => {
+        const map = availabilityMapMap.get(u.userId) || new Map();
+        const a = map.get(c.candidateId) || 0; // デフォルト値は 0 を利用
+        map.set(c.candidateId, a);
+        availabilityMapMap.set(u.userId, map);
+      });
+    });
+
+    // コメント取得
+    return Comment.findAll({
+      where: { scheduleId: storedSchedule.scheduleId }
+    }).then((comments) => {
+      const commentMap = new Map();  // key: userId, value: comment
+      comments.forEach((comment) => {
+        commentMap.set(comment.userId, comment.comment);
+      });
+      res.render('schedule', {
+        user: req.user,
+        schedule: storedSchedule,
+        candidates: storedCandidates,
+        users: users,
+        availabilityMapMap: availabilityMapMap,
+        commentMap: commentMap
+      });
+    });
+  });
+});
+```
+
+</details>
+
+Candidate.findAll の結果と Availability.findAll の結果をそれぞれ then 関数の return で返すようにした。
+
+他の Promise オブジェクトへの処理をまたいで利用したい値である
+
+- データベースに保存されている予定
+- データベースに保存されている候補
+
+以上 2 つのデータは、
+
+```js
+let storedSchedule = null;
+let storedCandidates = null;
+```
+
+以上のように then に渡す関数のスコープの外側に変数宣言をすることで、 ほかの then に渡している関数からも利用できるようにしている。
+
+これもまた、深い入れ子構造になっていた関数を浅くすることができた。
+
+`yarn test` で、全てのテストが問題なく実行され、`6 passing` というように、エラーが生じずに全てのテストが実行できれば、このリファクタリングは完了。
+
+残る機能要件は、予定の編集と削除だけとなった。
+----
+**練習**
+
+1 秒後に整数 11 を返す関数 getA と、
+1 秒後に整数 13 を返す関数 getB と、
+1 秒後に整数 17 を返す関数 getC の 3 つの関数があります。
+
+<details close>
+<summary>コード</summary>
+
+```js
+function getA() {
+  return new Promise((resolve) => {
+    setTimeout(() => { resolve(11); }, 1000);
+  });
+}
+
+function getB() {
+  return new Promise((resolve) => {
+    setTimeout(() => { resolve(13); }, 1000);
+  });
+}
+
+function getC() {
+  return new Promise((resolve) => {
+    setTimeout(() => { resolve(17); }, 1000);
+  });
+}
+```
+</details>
+
+それぞれ答えとなる整数値を Promise オブジェクトとして返す。
+
+この 3 つの関数の結果をかけあわせた数値を、 Promise チェインを一度は利用して標準出力に出力してみよ。
+2431 が答えとして表示されるようにすること。
+
+なお、getA 関数と getB 関数の答えを返す Promise オブジェクトは、
+
+```js
+getA().then((a) => {
+  return getB().then((b) => { return a * b; });
+})
+```
+
+以上の記述で得られる。
+標準出力には、 console.log 関数を利用すること。
+
+**答え**
+
+index.js
+
+```js
+getA().then((a) => {
+  return getB().then((b) => { return a * b; });
+}).then((result) => {
+  getC().then((c) => { console.log(result * c); });
+});
+```
+
+以上の実装で、 node index.js の結果、 2431 が得られる。
+
+getA と getB をかけた答えから作られる Promise オブジェクトの then 関数を呼び出し、 その結果と getC 関数で得られる答えをかけあわせたものを console.log で出力している。
+
+ちなみに、前回学習した `Promise.all` 関数を使うと、例えば次のように書ける。
+
+```js
+Promise.all([getA(), getB(), getC()]).then((results) => {
+    console.log(results[0] * results[1] * results[2]);
+});
+```
+
+こちらの実装では、getA, getB, getC の Promise すべてが同時に開始されるため、上の実装例とは違い約 1 秒で終了する。
+
+また、さらに進んだ内容だが、async/await という構文を使うと、次のように簡潔に書くことができる。
+
+```js
+getA().then(async(a) => {
+  const b = await getB();
+  const c = await getC();
+  console.log(a * b * c);
+});
+```
+
+この実装は、匿名関数を `async` 関数とし、 `await` がついている式の Promise を順番に待つ。getA, getB, getC が順番に実行されるため、終了まで 3 秒かかる。
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+```
+
+</details>
+
+
+
+<details close>
+<summary>test/test.js</summary>
+
+```diff
+```
+
+</details>
