@@ -3409,6 +3409,7 @@ let storedCandidates = null;
 `yarn test` で、全てのテストが問題なく実行され、`6 passing` というように、エラーが生じずに全てのテストが実行できれば、このリファクタリングは完了。
 
 残る機能要件は、予定の編集と削除だけとなった。
+
 ----
 **練習**
 
@@ -3494,20 +3495,1222 @@ getA().then(async(a) => {
 
 この実装は、匿名関数を `async` 関数とし、 `await` がついている式の Promise を順番に待つ。getA, getB, getC が順番に実行されるため、終了まで 3 秒かかる。
 
+## § 21. 予定の編集と削除
+ここまでで、出欠表が持つ機能の実装が完了した。  
+今回は、予定の内容の編集と削除を実装していく。  
+これが終われば、機能要件はすべて実装完了になる。
+
+### 予定の編集で更新できる属性
+ひとことに予定の編集と言っても、編集できる属性の項目は決めなくてはいけない。  
+編集したい内容を考えると、
+
+- 予定名
+- メモ
+
+以上は編集したいだろう。加えて編集したいものといえば、
+
+- 予定の候補
+
+がある。
+
+ただし、ここでよく考える必要がある。  
+すでに予定の候補の編集という機能は、他の要件と衝突してしまっているのである。
+
+例えば、A さんが作った予定に「 1 月 1 日」という名前の予定の候補があったとする。  
+その後、A さん、 B さん、C さんが、「出席」という出欠情報を入力したとしよう。
+
+その後、Aさんが「 1 月 1 日」を「 1 月 2 日」に編集した場合を考える。
+その場合も、B さん、 C さんの出欠情報は出欠のまま出欠表に入力されたままとなっている。
+これは運用上のトラブルを発生させかねない。
+
+結果として B さん、C さんは、 1 月 2 日に予定かぶりを発生させてしまうことになるだろう。
+
+この問題からわかるのは、予定の候補の編集は、ただ編集だけできるだけでは成立しないということ。
+
+候補の編集機能に加えて、予定を欠席の状態に戻す機能や、 候補に変更があったことを通知したりするなどの別な機能がないと、 運用上の問題が起こってしまうのである。
+
+そのため、ここの編集では、
+
+- 新たな予定の候補を追加できる
+
+という要件として実装していこう。
+
+また、その際には既存の候補も一緒に予定編集フォームに表示してあげることで、 編集の利便性を高めることができそう。
+
+予定の編集の要件が固まったところで、実際に予定編集フォームを作成していく。
+
+### 予定編集フォームの実装
+まずはテンプレートファイル `views/edit.pug` を作成する。
+
+このテンプレートには、
+
+- `schedule` というプロパティ名の予定のモデル
+- `candidates` というプロパティ名で候補のモデルの配列
+
+が割り当てられる前提で実装をしていく。
+
+<details close>
+<summary>views/edit.pug</summary>
+
+```pug
+extends layout
+
+block content
+  h3 予定の編集
+  form(method="post", action=`/schedules/${schedule.scheduleId}?edit=1`)
+    div
+      h5 予定名
+      input(type="text" name="scheduleName" value=schedule.scheduleName)
+    div
+      h5 メモ
+      textarea(name="memo") #{schedule.memo}
+    div
+      label 既存の候補日程
+      ul
+        each candidate in candidates
+          li #{candidate.candidateName}
+      p 候補日程の追加 (改行して複数入力してください)
+      textarea(name="candidates")
+    div
+      button(type="submit") 以上の内容で予定を編集する
+```
+
+ほとんど予定作成フォームと同じ構造になっているが、既存の候補日程も表示できるようになっている。  
+また、フォームの投稿を受け付ける URL のパスは
+
+```
+/schedules/:scheduleId?edit=1
+```
+となっているため、そのように実装した。
+
+</details>
+
+では、これに合わせたハンドラを Router オブジェクトに登録してしまおう。
+`routes/schedules.js` を以下のように編集する。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+     });
+   });
+ });
++
++router.get('/:scheduleId/edit', authenticationEnsurer, (req, res, next) => {
++  Schedule.findOne({
++    where: {
++      scheduleId: req.params.scheduleId
++    }
++  }).then((schedule) => {
++    if (isMine(req, schedule)) { // 作成者のみが編集フォームを開ける
++      Candidate.findAll({
++        where: { scheduleId: schedule.scheduleId },
++        order: [['"candidateId"', 'ASC']]
++      }).then((candidates) => {
++        res.render('edit', {
++          user: req.user,
++          schedule: schedule,
++          candidates: candidates
++        });
++      });
++    } else {
++      const err = new Error('指定された予定がない、または、予定する権限がありません');
++      err.status = 404;
++      next(err);
++    }
++  });
++});
++
++function isMine(req, schedule) {
++  return schedule && parseInt(schedule.createdBy) === parseInt(req.user.id);
++}
++
+ module.exports = router;
+```
+</details>
+
+**解説**
+
+```js
+router.get('/:scheduleId/edit', authenticationEnsurer, (req, res, next) => {
+```
+
+まず URL は、予定表示のページの末尾に `/edit` を加えたものとしている。
+
+```js
+Schedule.findOne({
+  where: {
+    scheduleId: req.params.scheduleId
+  }
+}).then((schedule) => {
+```
+
+ここで、指定された予定 ID の予定を取得。
+
+```js
+if (isMine(req, schedule)) { // 作成者のみが編集フォームを開ける
+```
+
+isMine という関数を別途用意して、自身の予定であればその後の処理を行っている。
+
+```js
+Candidate.findAll({
+  where: { scheduleId: schedule.scheduleId },
+  order: [['"candidateId"', 'ASC']]
+}).then((candidates) => {
+  res.render('edit', {
+    user: req.user,
+    schedule: schedule,
+    candidates: candidates
+  });
+});
+```
+
+以上の実装で候補を取得し、テンプレート edit を描画している。  
+なお、作成順に並ぶように candidateId の昇順で並び替える。
+
+```js
+} else {
+  const err = new Error('指定された予定がない、または、予定する権限がありません');
+  err.status = 404;
+  next(err);
+```
+
+この実装は、予定が自分が作ったものでなかったり、そもそも存在しなかったときに使われる。
+`404 Not Found` のステータスを返すように実装しています。
+
+```js
+function isMine(req, schedule) {
+  return schedule && parseInt(schedule.createdBy) === parseInt(req.user.id);
+}
+```
+
+この関数は、リクエストと予定のオブジェクトを受け取り、その予定が自分のものであるかの真偽値を返す関数。
+
+では実際に動かしてみよう。サーバーを再起動して、自分が作った予定の表示画面にアクセスしたら、末尾に `/edit` をつけてアクセスしてみよう。ここで、予定名、メモ、既存の候補日程、これらが表示されていれば、とりあえずフォームに最初に表示させる情報としては問題ない。
+
+### 予定編集を反映させる実装
+
+では、`/schedules/:scheduleId?edit=1` に POST メソッドで送られる情報を使って、データベースを更新してみよう。実装の流れとしては、
+
+1. 予定 ID で指定された予定を取得
+1. 予定名とメモを更新
+1. 新しく追加された候補をデータベース上に作成
+1. 予定表示ページにリダイレクト
+
+という実装になる。
+
+また、予定作成と同じ実装になる部分は、いくつか関数に切り出してしまおう。  
+`routes/schedules.js` を以下のように編集する。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+     createdBy: req.user.id,
+     updatedAt: updatedAt
+   }).then((schedule) => {
+-    const candidateNames = req.body.candidates.trim().split('\n').map((s) => s.trim()).filter((s) => s !== "");
+-    const candidates = candidateNames.map((c) => { return {
+-      candidateName: c,
+-      scheduleId: schedule.scheduleId
+-    };});
+-    Candidate.bulkCreate(candidates).then(() => {
+-      res.redirect('/schedules/' + schedule.scheduleId);
+-    });
++    createCandidatesAndRedirect(parseCandidateNames(req), scheduleId, res);
+   });
+ });
+```
+
+`createCandidatesAndRedirect` という関数で、候補の作成とリダイレクトを行うようにまとめた。  
+この処理は、編集でも全く同じとなるためである。
+
+```diff
+    return schedule && parseInt(schedule.createdBy) === parseInt(req.user.id);
+ }
+
++router.post('/:scheduleId', authenticationEnsurer, (req, res, next) => {
++  Schedule.findOne({
++    where: {
++      scheduleId: req.params.scheduleId
++    }
++  }).then((schedule) => {
++    if (isMine(req, schedule)) {
++      if (parseInt(req.query.edit) === 1) {
++        const updatedAt = new Date();
++        schedule.update({
++          scheduleId: schedule.scheduleId,
++          scheduleName: req.body.scheduleName.slice(0, 255) || '（名称未設定）',
++          memo: req.body.memo,
++          createdBy: req.user.id,
++          updatedAt: updatedAt
++        }).then((schedule) => {
++          // 追加されているかチェック
++          const candidateNames = parseCandidateNames(req);
++          if (candidateNames) {
++            createCandidatesAndRedirect(candidateNames, schedule.scheduleId, res);
++          } else {
++            res.redirect('/schedules/' + schedule.scheduleId);
++          }
++        });
++      } else {
++        const err = new Error('不正なリクエストです');
++        err.status = 400;
++        next(err);
++      }
++    } else {
++      const err = new Error('指定された予定がない、または、編集する権限がありません');
++      err.status = 404;
++      next(err);
++    }
++  });
++});
++
++function createCandidatesAndRedirect(candidateNames, scheduleId, res) {
++  const candidates = candidateNames.map((c) => {
++    return {
++      candidateName: c,
++      scheduleId: scheduleId
++    };
++  });
++  Candidate.bulkCreate(candidates).then(() => {
++    res.redirect('/schedules/' + scheduleId);
++  });
++}
++
++function parseCandidateNames(req) {
++  return req.body.candidates.trim().split('\n').map((s) => s.trim()).filter((s) => s !== "");
++}
++
+ module.exports = router;
+```
+
+以上が具体的な予定更新の処理となる。
+
+</details>
+
+**解説**
+
+```js
+  Schedule.findOne({
+    where: {
+      scheduleId: req.params.scheduleId
+    }
+  }).then((schedule) => {
+```
+
+まず予定 ID で予定を取得している。
+
+```js
+if (isMine(req, schedule)) {
+  if (parseInt(req.query.edit) === 1) {
+    const updatedAt = new Date();
+  schedule.update({
+    scheduleId: schedule.scheduleId,
+    scheduleName: req.body.scheduleName.slice(0, 255) || '（名称未設定）',
+    memo: req.body.memo,
+    createdBy: req.user.id,
+    updatedAt: updatedAt
+  }).then((schedule) => {
+```
+
+リクエストの送信者が作成者であるかをチェックし、 `edit=1` のクエリがあるときのみ更新を行う。 更新は予定名、メモ、作成者、更新日時について。  
+なおここで実行されている、 `schedule` の `update` 関数は SQL における UPDATE 文に対応しており、予定の更新を行うもの。
+
+```js
+// 追加されているかチェック
+const candidateNames = parseCandidateNames(req);
+if (candidateNames) {
+  createCandidatesAndRedirect(candidateNames, schedule.scheduleId, res);
+} else {
+  res.redirect('/schedules/' + schedule.scheduleId);
+}
+```
+
+リクエストから候補日程の配列をパースする関数 `parseCandidateNames` を呼び出す。  
+パースとは、文字列を文法にそって正しく分解して解釈すること。
+
+ここでは、`parseCandidateNames` 関数の中でリクエスト内に含まれる改行で区切られた候補日程を分割し、 `trim` 関数で前後の空白を除去するなどして、候補日程の配列が得られるようにしている。
+
+そして、その追加候補があるかどうかによって、 `createCandidatesAndRedirect` 関数を呼んで、 候補を追加してリダイレクトするか、そのままリダイレクトするかを if 文で分岐している。
+
+```js
+} else {
+  const err = new Error('不正なリクエストです');
+  err.status = 400;
+  next(err);
+}
+```
+
+この実装は、`edit=1` 以外のクエリが渡された際に 400 Bad Request のステータスコードを返す処理となる。
+
+```js
+} else {
+  const err = new Error('指定された予定がない、または、編集する権限がありません');
+  err.status = 404;
+  next(err);
+```
+以上の実装で、予定が見つからない場合や自分自身の予定ではない場合に、 404 Not Found のステータスコードを返すように実装している。
+
+```js
+function createCandidatesAndRedirect(candidateNames, scheduleId, res) {
+  const candidates = candidateNames.map((c) => { 
+    return {
+      candidateName: c,
+      scheduleId: scheduleId
+    };
+  });
+  Candidate.bulkCreate(candidates).then(() => {
+    res.redirect('/schedules/' + scheduleId);
+  });
+}
+```
+
+`createCandidatesAndRedirect` 関数は、すでに予定作成にあった実装の切り出しを行った関数である。
+候補日程の配列、予定 ID、レスポンスオブジェクトを受け取り、 候補の作成とリダイレクトを行っている。
+
+```js
+function parseCandidateNames(req) {
+  return req.body.candidates.trim().split('\n').map((s) => s.trim()).filter((s) => s !== "");
+}
+```
+
+これもすでに存在したリクエストから予定名の配列をパースする処理を、 `parseCandidateNames` という関数名で切り出したものである。
+
+関数は切り出すことによって、他の場所で再利用することができるようになる。
+
+あとは、編集ページヘのリンクが無くて不便なので、`views/schedule.pug` も以下のように編集して、リンクを作成してしまおう。
+
+```diff
+   h4 #{schedule.scheduleName}
+   p(style="white-space:pre;") #{schedule.memo}
+   p 作成者: #{schedule.user.username}
++  - var isMine = parseInt(user.id) === schedule.user.userId
++  if isMine
++    div
++      a(href=`/schedules/${schedule.scheduleId}/edit`) この予定を編集する
+   h3 出欠表
+   table
+     tr
+```
+
+ここまで完了したらサーバーを再起動して `http://localhost:8000/` にアクセスしてログインし、予定表示ページを表示して編集ページへのリンクから編集を行ってみよう。
+
+- 予定名が編集できる
+- メモが編集できる
+- 新しい予定の候補が追加できる
+
+以上 3 つを試してみよう。問題なく編集できれば編集機能は実装できたということである。
+
+### 予定が編集できることのテスト
+「予定が更新でき、候補が追加できる」というテストを追加する。  
+`test/test.js` を以下のように実装する。
+
 <details close>
 <summary>test/test.js</summary>
 
 ```diff
+   });
+ });
+ 
++describe('/schedules/:scheduleId?edit=1', () => {
++  before(() => {
++    passportStub.install(app);
++    passportStub.login({ id: 0, username: 'testuser' });
++  });
++
++  after(() => {
++    passportStub.logout();
++    passportStub.uninstall(app);
++  });
++
++  it('予定が更新でき、候補が追加できる', (done) => {
++    User.upsert({ userId: 0, username: 'testuser' }).then(() => {
++      request(app)
++        .post('/schedules')
++        .send({ scheduleName: 'テスト更新予定1', memo: 'テスト更新メモ1', candidates: 'テスト更新候補1' })
++        .end((err, res) => {
++          const createdSchedulePath = res.headers.location;
++          const scheduleId = createdSchedulePath.split('/schedules/')[1];
++          // 更新がされることをテスト
++          request(app)
++            .post(`/schedules/${scheduleId}?edit=1`)
++            .send({ scheduleName: 'テスト更新予定2', memo: 'テスト更新メモ2', candidates: 'テスト更新候補2' })
++            .end((err, res) => {
++              Schedule.findByPk(scheduleId).then((s) => {
++                assert.equal(s.scheduleName, 'テスト更新予定2');
++                assert.equal(s.memo, 'テスト更新メモ2');
++              });
++              Candidate.findAll({
++                where: { scheduleId: scheduleId },
++                order: [['"candidateId"', 'ASC']]
++              }).then((candidates) => {
++                assert.equal(candidates.length, 2);
++                assert.equal(candidates[0].candidateName, 'テスト更新候補1');
++                assert.equal(candidates[1].candidateName, 'テスト更新候補2');
++                deleteScheduleAggregate(scheduleId, done, err);
++              });
++            });
++        });
++    });
++  });
++});
++
+ function deleteScheduleAggregate(scheduleId, done, err) {
+   const promiseCommentDestroy = Comment.findAll({
+     where: { scheduleId: scheduleId }
 ```
+</details>
+
+### 削除機能の実装
+削除機能は編集ページにつけてしまう予定であった。削除ボタンを実装しよう。
+
+`views/edit.pug` を以下のように実装して、削除ボタンを作る。
+
+<details close>
+<summary>views/edit.pug</summary>
+
+```diff
+       p 候補日程の追加 (改行して複数入力してください)
+       textarea(name="candidates")
+     div
+       button(type="submit") 以上の内容で予定を編集する
++  h3 危険な変更
++  form(method="post", action=`/schedules/${schedule.scheduleId}?delete=1`)
++    button(type="submit") この予定を削除する
+```
+</details>
+
+そのまま、このボタンを押した時に実行される削除処理の実装もしてしまおう。
+
+`routes/schedules.js` を以下のように実装する。  
+すでに `test/test.js` において `deleteScheduleAggregate` 関数という、予定に関連する情報を削除する関数を実装しているので、それをそのまま利用しよう。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+       });
+     });
++  } else if (parseInt(req.query.delete) === 1) {
++    deleteScheduleAggregate(req.params.scheduleId, () => {
++      res.redirect('/');
++    });
+   } else {
+    const err = new Error('不正なリクエストです');
+```
+
+`parseInt(req.query.delete) === 1` とすることで、delete=1 というクエリが渡された時の処理を記述している。  
+`deleteScheduleAggregate` 関数をそのまま利用し、削除実行後、 `/` というルートパスにリダイレクトを行っている。
+
+```diff
+   }
+ });
+ 
++function deleteScheduleAggregate(scheduleId, done, err) {
++  const promiseCommentDestroy = Comment.findAll({
++    where: { scheduleId: scheduleId }
++  }).then((comments) => {
++    return Promise.all(comments.map((c) => { return c.destroy(); }));
++  });
++
++  Availability.findAll({
++    where: { scheduleId: scheduleId }
++  }).then((availabilities) => {
++    const promises = availabilities.map((a) => { return a.destroy(); });
++    return Promise.all(promises);
++  }).then(() => {
++    return Candidate.findAll({
++      where: { scheduleId: scheduleId }
++    });
++  }).then((candidates) => {
++    const promises = candidates.map((c) => { return c.destroy(); });
++    promises.push(promiseCommentDestroy);
++    return Promise.all(promises);
++  }).then(() => {
++    return Schedule.findByPk(scheduleId).then((s) => { return s.destroy(); });
++  }).then(() => {
++    if (err) return done(err);
++    done();
++  });
++}
++
++router.deleteScheduleAggregate = deleteScheduleAggregate;
++
+ function createCandidatesAndRedirect(candidateNames, scheduleId, res) {
+     const candidates = candidateNames.map((c) => { return {
+       candidateName: c,
+```
+
+以上は `test/test.js` の deleteScheduleAggregate をほとんどそのままコピーしたもの。
+また、`router.deleteScheduleAggregate = deleteScheduleAggregate` の部分で、test/test.js 内でもこの関数を利用できるように この Router オブジェクトの公開関数としてある。
 
 </details>
 
+サーバーを再起動して、再度アクセス・ログインして、実際に予定が削除できるのかを試してみよう。
 
+削除をしてみて、その結果、自分が作った予定の一覧が出てこなくなれば成功。
+
+また、テストのほうで、先ほど Router オブジェクトに移動させた `deleteScheduleAggregate` 関数を利用するように修正する。
+
+`test/test.js` を以下のように実装しよう。
 
 <details close>
 <summary>test/test.js</summary>
 
 ```diff
+ const Availability = require('../models/availability');
+ const Comment = require('../models/comment');
++const deleteScheduleAggregate = require('../routes/schedules').deleteScheduleAggregate;
+ 
+ describe('/login', () => {
+```
+
+以上で関数をモジュールから呼び出し、
+
+```diff
+     });
+   });
+ });
+-
+-function deleteScheduleAggregate(scheduleId, done, err) {
+-  const promiseCommentDestroy = Comment.findAll({
+-    where: { scheduleId: scheduleId }
+-  }).then((comments) => {
+-    return Promise.all(comments.map((c) => { return c.destroy(); }));
+-  });
+-
+-  Availability.findAll({
+-    where: { scheduleId: scheduleId }
+-  }).then((availabilities) => {
+-    const promises = availabilities.map((a) => { return a.destroy(); });
+-    return Promise.all(promises);
+-  }).then(() => {
+-    return Candidate.findAll({
+-      where: { scheduleId: scheduleId }
+-    });
+-  }).then((candidates) => {
+-    const promises = candidates.map((c) => { return c.destroy(); });
+-    promises.push(promiseCommentDestroy);
+-    return Promise.all(promises);
+-  }).then(() => {
+-    return Schedule.findByPk(scheduleId).then((s) => { return s.destroy(); });
+-  }).then(() => {
+-    if (err) return done(err);
+-    done();
+-  });
+-}
+```
+
+以上のように、`deleteScheduleAggregate` 関数を除去する。
+
+</details>
+
+また、上記のテストでは「予定に関連するすべての情報が削除できる」というテストが書かれていない。  
+コメント、出欠、候補、予定、のすべてを DB 上から削除できることをテストできるようにする。
+
+<details close>
+<summary>test/test.js</summary>
+
+```js
+describe('/schedules/:scheduleId?delete=1', () => {
+  before(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
+
+  after(() => {
+    passportStub.logout();
+    passportStub.uninstall(app);
+  });
+
+  it('予定に関連する全ての情報が削除できる', (done) => {
+    User.upsert({ userId: 0, username: 'testuser' }).then(() => {
+      request(app)
+        .post('/schedules')
+        .send({ scheduleName: 'テスト更新予定1', memo: 'テスト更新メモ1', candidates: 'テスト更新候補1' })
+        .end((err, res) => {
+          const createdSchedulePath = res.headers.location;
+          const scheduleId = createdSchedulePath.split('/schedules/')[1];
+
+          // 出欠作成
+          const promiseAvailability = Candidate.findOne({
+            where: { scheduleId: scheduleId }
+          }).then((candidate) => {
+            return new Promise((resolve) => {
+              const userId = 0;
+              request(app)
+                .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
+                .send({ availability: 2 }) // 出席に更新
+                .end((err, res) => {
+                  if (err) done(err);
+                  resolve();
+                });
+            });
+          });
+
+          // コメント作成
+          const promiseComment = new Promise((resolve) => {
+            const userId = 0;
+            request(app)
+              .post(`/schedules/${scheduleId}/users/${userId}/comments`)
+              .send({ comment: 'testcomment' })
+              .expect('{"status":"OK","comment":"testcomment"}')
+              .end((err, res) => {
+                if (err) done(err);
+                resolve();
+              });
+          });
+
+          // 削除
+          const promiseDeleted = Promise.all([promiseAvailability, promiseComment]).then(() => {
+            return new Promise((resolve) => {
+              request(app)
+                .post(`/schedules/${scheduleId}?delete=1`)
+                .end((err, res) => {
+                  if (err) done(err);
+                  resolve();
+                });
+            });
+          });
+
+          // テスト
+          promiseDeleted.then(() => {
+            const p1 = Comment.findAll({
+              where: { scheduleId: scheduleId }
+            }).then((comments) => {
+              assert.equal(comments.length, 0);
+            });
+            const p2 = Availability.findAll({
+              where: { scheduleId: scheduleId }
+            }).then((availabilities) => {
+              assert.equal(availabilities.length, 0);
+            });
+            const p3 = Candidate.findAll({
+              where: { scheduleId: scheduleId }
+            }).then((candidates) => {
+              assert.equal(candidates.length, 0);
+            });
+            const p4 = Schedule.findByPk(scheduleId).then((schedule) => {
+              assert.equal(!schedule, true);
+            });
+            Promise.all([p1, p2, p3, p4]).then(() => {
+              if (err) return done(err);
+              done();
+            });
+          });
+        });
+    });
+  });
+});
+```
+
+予定作成、出欠作成、コメント作成、削除、の様々なフェーズで Promise オブジェクトを作成している。  
+なお `findAll` 関数は、戻ってきた Promise オブジェクトの then に渡す関数の引数として、 データモデルのオブジェクトの配列を渡す。 `findByPk` 関数は、then に渡す関数の引数として、 データモデルのオブジェクトを渡し、存在しない場合は null になる。
+
+ちなみに、変数 `a` が `null` であることをテストしたい場合は `assert.equal(!a, true);` でテストできる（上記コードでは schedule 変数について行っている）。
+
+</details>
+
+`yarn test` して、すべてのテストが通り、削除の SQL が実行されていることも確認すること。
+
+以上で、すべての機能要件を実装しきったことになる。
+
+## § 22. デザインの改善
+すでにすべての機能要件を実装することができた。  
+今回はデザイン（見た目）を改善していく。
+
+### JavaScript の this
+今回、実装を始める前に `this` についての解説をはさむ。
+
+基本的には、 **`this` が書かれた処理の関数が所属するオブジェクト** が `this` という変数の中に入っている。
+
+そのため、関数が特に何にも所属していない場合には、グローバルオブジェクトという一番上位のスコープを表すオブジェクトが入っている。
+
+さらに状況によっては、`this` の値は他の値に変わることがある。  
+たとえば関数が new というキーワードで呼び出された際には、新しく作られた関数オブジェクト自体を表したり、`apply` という関数を使った際には、`this` には好きな値を入れることもできたりする。
+
+しかし、基本的には、`this` は **`this` が書かれた関数が所属するオブジェクト** というふうに捉えればよい。
+
+実際に動きを確かめてみよう。  
+Chrome のデベロッパーツールの Console を開いて
+
+```js
+const a = {title: 'タイトル', print: function(){ console.log(this.title); }};
+a.print();
+```
+
+以上の二行を実行すると、「タイトル」と表示される。つまり `this` は オブジェクト `a` を表していることがわかる。
+
+次に、
+
+```js
+function printGlobal() { console.log(this); }
+printGlobal();
+```
+
+と入力すると、`Window { external: Object, chrome: Object, document: document, ...} ` というように Window オブジェクトが Console に表示される。  
+ブラウザの JavaScript においては、Window オブジェクトがグローバルオブジェクトになっているからである。
+
+このように、`this` 変数は、呼び出される場所によって異なる挙動を示す。
+
+*👀* **function 宣言による記法とアロー関数の違いもある。**
+
+```js
+const hoge = {
+    print: () => { console.log(this); }
+}
+
+const moge = {
+    print: function() {
+        console.log(this);
+    }
+}
+```
+
+以上の二つを考える場合、`hoge.print()` の結果は Window オブジェクトだが、`moge.print()` は `{print: f}` というふうに、呼び出し元の moge オブジェクト自体を指す。
+
+----
+
+### Bootstrap のインストール
+
+```bash
+yarn add bootstrap@4.0.0
+yarn add popper.js@1.14.0
+```
+
+以上のコマンドで Bootstrap と Boostrap が依存している依存モジュールのインストールを行う。
+
+インストールできたら、組み込みを行う。  
+まず、 `app/entry.js` を以下のように実装する。
+
+<details close>
+<summary>app/entry.js</summary>
+
+```diff
+ 'use strict';
+ import $ from 'jquery';
++const global = Function('return this;')();
++global.jQuery = $;
++import bootstrap from 'bootstrap';
+ 
+ $('.availability-toggle-button').each((i, e) => {
 ```
 
 </details>
+
+この処理では、グローバルオブジェクトの jQuery というプロパティに jQuery を代入している。  
+これを行わないと Bootstrap が jQuery を利用できないため。
+
+```js
+const global = Function('return this;')();
+```
+
+`Function` 関数は、引数で受け取った文字列をもとに関数を生成する。  
+そして、ここでは作った関数をその場で呼び出し、グローバルオブジェクトを取得している。  
+先ほど学んだ this を、グローバルオブジェクトを取得する手段として使っている。
+
+モジュールを用いた JavaScript の開発では、グローバルオブジェクトを取得するのにこのような工夫をしてやる必要がある。
+
+次に、`views/layout.pug` を以下のように編集して Bootstrap に対応させる。
+
+<details close>
+<summary>views/layout.pug</summary>
+
+```diff
+ doctype html
+ html
+   head
+-    title= title
+-    link(rel='stylesheet', href='/stylesheets/style.css')
++    title 予定調整くん
++    meta(charset="utf-8")
++    meta(name="viewport" content="width=device-width, initial-scale=1")
++    link(rel="stylesheet",
++    href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css",
++    integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm",
++    crossorigin="anonymous")
+   body
+-    block content
++    div.container
++      block content
+     script(src="/javascripts/bundle.js")
+
+```
+
+</details>
+
+過去 Bootstrap を利用したときと同じ設定で Bootstrap の CSS を読み込んでいる。  
+また title もここでは「予定調整くん」で固定してしまっている。
+
+なお、block content で継承元で呼び出されるてぬレートを `div.container` の中に含めるようにしている。  
+これは Bootstrap のための設定のひとつとなる。
+
+### NavBar の設置 layout.pug
+すべてのページでログイン、ログアウトのバーを表示させよう。  
+`views/layout.pug` を以下のように変更する。
+
+<details close>
+<summary>views/layout.png</summary>
+
+```diff
+    link(href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css", rel="stylesheet", integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm", crossorigin="anonymous")
+   body
++    nav.navbar.navbar-light.bg-light
++      div.navbar-header
++        a(href="/").navbar-brand.nav-link 予定調整くん
++      ul.navbar-nav
++        if user
++          li.nav-item
++            a(href="/logout").nav-link #{user.username} をログアウト
++        else
++          li.nav-item
++            a(href="/login").nav-link ログイン
+     div.container
+       block content
+     script(src="/javascripts/bundle.js")
+```
+</details>
+
+[NavBar](https://getbootstrap.com/docs/4.0/components/navbar/) という部品をそのまま利用した。
+また、左側に「予定調整くん」というラベルの書かれたトップに戻るリンクを配置し、ログアウトのリンクに、ログインしているユーザー名も含めてみた。
+
+### トップページ index.pug
+トップページには、[Jumbotron](https://getbootstrap.com/docs/4.0/components/jumbotron/) というタイトルと説明を表示させる部品を利用してみる。  
+また、class を割り当てて表やボタンの見栄えをよくする。
+
+<details close>
+<summary>views/index.pug</summary>
+
+```diff
+ extends layout
+ 
+ block content
+-  h1= title
+-  p Welcome to #{title}
+-  div
+-    if user
+-      div
+-        a(href="/logout") #{user.username} をログアウト
+-      div
+-        a(href="/schedules/new") 予定を作る
+-      - var hasSchedule = schedules.length > 0
+-      if hasSchedule
+-        h3 あなたの作った予定一覧
+-        table.table
++  div.jumbotron.my-3
++    h1.display-4 予定調整くん
++    p.lead 予定調整くんは、GitHubで認証でき、予定を作って出欠が取れるサービスです
++  if user
++    div
++      a(href="/schedules/new").btn.btn-info 予定を作る
++    - var hasSchedule = schedules.length > 0
++    if hasSchedule
++      h3.my-3 あなたの作った予定一覧
++      table.table
++        tr
++          th 予定名
++          th 更新日時
++        each schedule in schedules
+           tr
+-            th 予定名
+-            th 更新日時
+-          each schedule in schedules
+-            tr
+-              td
+-                a(href=`/schedules/${schedule.scheduleId}`) #{schedule.scheduleName}
+-              td #{schedule.updatedAt}
+-    else
+-      div
+-        a(href="/login") ログイン
++          td
++            a(href=`/schedules/${schedule.scheduleId}`) #{schedule.scheduleName}
++          td #{schedule.updatedAt}
+```
+</details>
+
+### ログインページ login.pug
+ログインページでは、ログイン中のラベルを消して、ボタンのスタイルを適用させる。  
+`views/login.pug` を以下のように編集する。
+
+<details close>
+<summary>views/login.pug</summary>
+
+```diff
+ extends layout
+ 
+ block content
+-  a(href="/auth/github") GitHubでログイン
+-  if user
+-    p 現在 #{user.username} でログイン中
++  a(href="/auth/github").btn.btn-info.my-3 GitHubでログイン
+```
+</details>
+
+ボタンにクラスを割り当てたため、`test.js` を以下のように編集する。
+
+<details close>
+<summary>test.js</summary>
+
+```diff
+   it('ログインのためのリンクが含まれる', (done) => {
+     request(app)
+       .get('/login')
+       .expect('Content-Type', 'text/html; charset=utf-8')
+-      .expect(/<a href="\/auth\/github"/)
++      .expect(/<a class="btn btn-info my-3" href="\/auth\/github"/)
+       .expect(200, done);
+  });
+```
+</details>
+
+### 予定作成ページ new.pug
+Bootstrap で [フォーム](http://getbootstrap.com/css/#forms) にデザインを適用する場合には、`label` 要素を用いたり、`label` 要素と `input` 要素を対応づける必要があった。
+
+以下のように `views/new.pug` を変更する。
+
+<details close>
+<summary>views/new.pug</summary>
+
+```diff
+ block content
+-  form(method="post", action="/schedules")
+-    div
+-      h5 予定名
+-      input(type="text" name="scheduleName")
+-    div
+-      h5 メモ
+-      textarea(name="memo")
+-    div
+-      h5 候補日程 (改行して複数入力してください)
+-      textarea(name="candidates")
+-  button(type="submit") 予定をつくる
++  form(method="post", action="/schedules").my-3
++    div.form-group
++      label(for="scheduleName") 予定名
++      input(type="text" name="scheduleName")#scheduleName.form-control
++    div.form-group
++      label(for="memo") メモ
++      textarea(name="memo")#memo.form-control
++    div.form-group
++      label(for="candidates") 候補日程 (改行して複数入力してください)
++      textarea(name="candidates" rows="4")#candidates.form-control
++    button(type="submit").btn.btn-info 予定をつくる
+```
+
+</details>
+
+### 予定編集ページ
+編集ページでも似たように Bootstrap のフォームのデザインの適用を行う。  
+`views/edit.pug` を以下のように変更する。
+
+<details close>
+<summary>views/edit.pug</summary>
+
+```diff
+ block content
+   h3.my-3 予定の編集
+   form(method="post", action=`/schedules/${schedule.scheduleId}?edit=1`)
+-    div
+-      h5 予定名
+-      input(type="text" name="scheduleName" value=schedule.scheduleName)
+-    div
+-      h5 メモ
+-      textarea(name="memo") #{schedule.memo}
+-    div
+-      label 既存の候補日程
+-      ul
++    div.form-group
++      label(for="scheduleName") 予定名
++      input(type="text" name="scheduleName" value=schedule.scheduleName)#scheduleName.form-control
++    div.form-group
++      label(for="memo") メモ
++      textarea(name="memo")#memo.form-control #{schedule.memo}
++    div.form-group
++      label 既存の日程候補
++      ul.list-group
+         each candidate in candidates
+-          li #{candidate.candidateName}
+-      p 候補日程の追加 (改行して複数入力してください)
+-      textarea(name="candidates")
++          li.list-group-item #{candidate.candidateName}
++      label(for="candidates").my-2 候補日程の追加 (改行して複数入力してください)
++      textarea(name="candidates")#candidates.form-control
+     div
+-      button(type="submit") 以上の内容で予定を編集する
+-  h3 危険な変更
++      button(type="submit").btn.btn-info 以上の内容で予定を編集する
++  h3.my-3 危険な変更
+   form(method="post", action="/schedules/#{schedule.scheduleId}?delete=1")
+-    button(type="submit") この予定を削除する
++    button(type="submit").btn.btn-danger この予定を削除する
+```
+
+予定を消す際のボタンは、`btn-danger` という class を適用することで、注意を喚起している。
+
+</details>
+
+### 予定表示ページ schedule.pug
+最後にこの「予定調整くん」の中心的な機能である、予定表示ページの出欠表のデザインの見た目を改善sる。
+
+`views/schedule.pug` を以下のように修正していく。
+
+<details close>
+<summary>views/schedule.pug</summary>
+
+```diff
+ extends layout
+ 
+ block content
+-  h4 #{schedule.scheduleName}
+-  p(style="white-space:pre;") #{schedule.memo}
+-  p 作成者: #{schedule.user.username}
++  div.card.my-3
++    div.card-header
++      h4 #{schedule.scheduleName}
++    div.card-body
++      p(style="white-space:pre;") #{schedule.memo}
++    div.card-footer
++      p 作成者: #{schedule.user.username}
+   - var isMine = parseInt(user.id) === schedule.user.userId
+   if isMine
+     div
+-      a(href=`/schedules/${schedule.scheduleId}/edit`) この予定を編集する
+-  h3 出欠表
+-  table
++      a(href=`/schedules/${schedule.scheduleId}/edit`).btn.btn-info この予定を編集する
++  h3.my-3 出欠表
++  table.table.table-bordered
+     tr
+       th 予定
+       each user in users
+@@ -20,24 +24,29 @@ block content
+         each user in users
+           - var availability = availabilityMapMap.get(user.userId).get(candidate.candidateId)
+           - var availabilityLabels = ['欠', '？', '出'];
++          - var buttonStyles = ['btn-danger', 'btn-secondary', 'btn-success'];
+           td
+             if user.isSelf
+-              button(
++              button(class=`availability-toggle-button btn-lg ${buttonStyles[availability]}`
+                 data-schedule-id=schedule.scheduleId
+                 data-user-id=user.userId
+                 data-candidate-id=candidate.candidateId
+-                data-availability=availability).availability-toggle-button #{availabilityLabels[availability]}
++                data-availability=availability) #{availabilityLabels[availability]}
+             else
+-              p #{availabilityLabels[availability]}
++              h3 #{availabilityLabels[availability]}
+     tr
+       th コメント
+       each user in users
+         if user.isSelf
+           td
+-            p#self-comment #{commentMap.get(user.userId)}
++            p
++              small#self-comment #{commentMap.get(user.userId)}
+             button(
+               data-schedule-id=schedule.scheduleId
+-              data-user-id=user.userId)#self-comment-button 編集
++              data-user-id=user.userId)#self-comment-button.btn-sm.btn-info 編集
+         else
+           td
+-            p #{commentMap.get(user.userId)}
++            p
++              small #{commentMap.get(user.userId)}
+```
+
+</details>
+
+上記では、予定の内容の表示に [Card](https://getbootstrap.com/docs/4.0/components/card/) という部品を使った。  
+また、['欠', '？', '出'] だけのラベルではなく、ボタンの色も変えるようにしている。
+
+なお、コメントは小さいボタンのデザインを表示したほか、コメント自体も小さく表示されるようにした。
+
+再読み込みをして確認してみよう。  
+ただ、出欠ボタンを実際にクリックすると気づくと思いますが、 クリックで変わったあとの出欠に応じて、ボタンの色も追従して変更させなくてはいけない。
+
+`app/entry.js` を以下のように編集しよう。
+
+```diff
+         button.data('availability', data.availability);
+         const availabilityLabels = ['欠', '？', '出'];
+         button.text(availabilityLabels[data.availability]);
++
++        const buttonStyles = ['btn-danger', 'btn-secondary', 'btn-success'];
++        button.removeClass('btn-danger btn-secondary btn-success');
++        button.addClass(buttonStyles[data.availability]);
+       });
+   });
+ });
+```
+
+以上の実装では、ボタンとセルのスタイルをいったんすべて取り除き、新たに追加するという実装にしている。
+
+### 時刻の表示
+トップページにログインした際の「あなたのつくった予定一覧」での日付が、現在は UTC での表示になっている。  
+これを JST 日本標準時に変換した後、 `YYYY/MM/DD HH:mm` 形式で、「2020/05/10 12:00」のように表示されるように修正しよう。
+
+以前使った [Moment Timezone](https://momentjs.com/timezone/) というモジュールを使う。
+
+```js
+yarn add moment-timezone@0.5.0
+```
+
+<details close>
+<summary>routes/index.js</summary>
+
+```diff
+ const express = require('express');
+ const router = express.Router();
+ const Schedule = require('../models/schedule');
++const moment = require('moment-timezone');
+ 
+ /* GET home page. */
+
+(中略)
+
+       },
+       order: [['"updatedAt"', 'DESC']]
+     }).then((schedules) => {
++      schedules.forEach((schedule) => {
++        schedule.formattedUpdatedAt = moment(schedule.updatedAt).tz('Asia/Tokyo').format('YYYY/MM/DD HH:mm');
++      });
+       res.render('index', {
+         title: title,
+         user: req.user,
+```
+
+上記では、YYYY/MM/DD HH:mm 形式にフォーマットされた日付を `formattedUpdatedAt` というプロパティ名で利用できるようにしている。  
+あとはこの `formattedUpdatedAt` をテンプレートで使用すればよい。
+
+</details>
+
+<details close>
+<summary></summary>
+
+```diff
+           tr
+             td
+               a(href=`/schedules/${schedule.scheduleId}`) #{schedule.scheduleName}
+-            td #{schedule.updatedAt}
++            td #{schedule.formattedUpdatedAt}
+```
+
+</details>
+
+以上完了したら、一度サーバーを止め、
+
+```bash
+node_modules/.bin/webpack
+PORT=8000 yarn start
+```
+
+として JavaScript を出力してからサーバーを起動する。以上でデザインの改善は終了。
+
+使わなくなった css ファイルは削除してしまおう。
+
+```bash
+rm public/stylesheets/style.css
+```
