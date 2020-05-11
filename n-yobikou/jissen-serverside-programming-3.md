@@ -4714,3 +4714,451 @@ PORT=8000 yarn start
 ```bash
 rm public/stylesheets/style.css
 ```
+
+## § 23. セキュリティ対策と公開
+### 行うべきセキュリティ対策
+今回はどのようなセキュリティ対策を行うべきなのか。過去紹介した脆弱性一覧を見ながら対策を考えよう。
+
+|脆弱性|影響|内容|
+|--|--|--|
+|OS コマンド・インジェクション|大|任意の OS のコマンドを実行できてしまう|
+|SQL インジェクション|大|任意の SQL コマンドを実行できてしまう|
+|ディレクトリ・トラバーサル|大|任意のファイルを閲覧、操作できてしまう|
+|セッションハイジャック|大|利用者のセッションが乗っ取られてしまう|
+|クロスサイト・スクリプティング（XSS）|中|スクリプトにより Web サイトの改竄ができてしまう|
+|クロスサイト・リクエストフォージェリ（CSRF）|中|利用者の意図しない操作がされてしまう|
+|HTTP ヘッダインジェクション|中|偽ページの表示などができてしまう|
+|クリックジャッキング|小|利用者の意図しないクリックをしてしまう|
+
+今回は GitHub 認証を利用しているため、ユーザーのアカウント管理は考える必要はない。
+
+OS コマンドインジェクションは、OS コマンドを実行している部分がないため大丈夫であろう。
+
+SQL インジェクションも、今回は　SQL をプログラム内の文字列として直接実行することはなく、必ず sequelize を利用して DB 操作を行っているため関係ない。
+
+ディレクトリ・トラバーサルは、Express の Router オブジェクトを介してルーティングをしているため問題ない。
+
+セッション・ハイジャックに関して、今回は Express の session の仕組みをそのまま利用して実装している。したがって、これらの脆弱性にはじゅうぶん気をつける必要があるが、いま対応が必要なものはない。
+
+クロスサイト・スクリプティングだが、今回は pug テンプレートを使用して HTML を描画している。そして、エスケープを無視して表示を行っている部分はないはずであるため OK。
+
+クロスサイト・リクエストフォージェリは、現時点の実装では脆弱性として存在している。
+
+- 予定作成フォーム
+- 予定編集フォーム
+- 予定削除フォーム
+
+これらの実装で使用しているフォームで、突かれてしまうつくりになっているため、これらは **対策しなくてはいけない**。
+
+HTTP  ヘッダインジェクションは、Cookie の内容を直接使用したり、自身で URL 全体を受け付けるリダイレクト機能を用意していないので大丈夫だろう。
+
+クリックジャッキングは、実はすでにここまでの実装で対策がなされている。Express の標準の設定で、レスポンスヘッダに `X-Frame-Options:SAMEORIGIN` という内容が含まれている。  
+このヘッダがあることで HTML の iframe 要素の機能により外部シアとからアクセスできないよう対策されている。
+
+なお、レスポンスヘッダの `X-Frame-Options` は、HTML における ”フレーム” という HTML 内に HTML を読み込む機能においてどのようなサイトからの読み込みを許可するかという設定である。 
+
+このヘッダに対して、クリックジャッキングを防ぐために、同じサイト内からの読み込みだけしか許可しない `SAMEORIGIN` を設定しているのである。
+
+以上を踏まえると、今回は CSRF 脆弱性対策だけを行う必要がありそうとわかる。
+
+### CSRF 脆弱性対策
+Express では簡単に CSRF 対策を行うことができる。  
+今回は csurf というミドルウェアをインストールして対策する。
+
+```bash
+yarn add csurf@1.8.3
+```
+
+あとは csurf の README.md に記載されている内容を元に、`routes/schedules.js` を以下のように実装する。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+ const User = require('../models/user');
+ const Availability = require('../models/availability');
+ const Comment = require('../models/comment');
++const csrf = require('csurf');
++const csrfProtection = csrf({ cookie: true });
+
+-router.get('/new', authenticationEnsurer, (req, res, next) => {
+-  res.render('new', { user: req.user });
++router.get('/new', authenticationEnsurer, csrfProtection, (req, res, next) => {
++  res.render('new', { user: req.user, csrfToken: req.csrfToken() });
+ });
+
+-router.post('/', authenticationEnsurer, (req, res, next) => {
++router.post('/', authenticationEnsurer, csrfProtection, (req, res, next) => {
+   const scheduleId = uuid.v4();
+   const updatedAt = new Date();
+   Schedule.create({
+```
+</details>
+
+ここでは、`csurf` モジュールを読み込み、CSRF 対策として利用できるトークンを `csrfToken` というプロパティ名でテンプレートに渡している。
+
+また、POST リクエスト時には、`csrfProtection` 関数を Router オブジェクトに渡すことで、チェックが行われるようにしている。
+
+<details close>
+<summary>routes/schedules.js</summary>
+
+```diff
+});
+
+-router.get('/:scheduleId/edit', authenticationEnsurer, (req, res, next) => {
++router.get('/:scheduleId/edit', authenticationEnsurer, csrfProtection, (req, res, next) => {
+   Schedule.findOne({
+     where: {
+       scheduleId: req.params.scheduleId
+     }
+   }).then((schedule) => {
+     if (isMine(req, schedule)) { // 作成者のみが編集フォームを開ける
+       Candidate.findAll({
+         where: { scheduleId: schedule.scheduleId },
+         order: [['"candidateId"', 'ASC']]
+       }).then((candidates) => {
+         res.render('edit', {
+           user: req.user,
+           schedule: schedule,
+-          candidates: candidates
++          candidates: candidates,
++          csrfToken: req.csrfToken()
+         });
+       });
+     } else {
+```
+
+```diff
+   return schedule && parseInt(schedule.createdBy) === parseInt(req.user.id);
+ }
+
+-router.post('/:scheduleId', authenticationEnsurer, (req, res, next) => {
++router.post('/:scheduleId', authenticationEnsurer, csrfProtection, (req, res, next) => {
+   Schedule.findOne({
+     where: {
+       scheduleId: req.params.scheduleId
+```
+
+</details>
+
+以上の部分にも同様の実装をしている。  
+編集と削除時のフォームの表示のときには、CSRF 対策のトークンを渡し、POST リクエスト時にチェックするようにしている。
+
+今の状態では、CSRF 対策のトークンが生成され、チェックされるようになっている。  
+しかしテンプレート側で、一緒にトークンを POST で送るようにはなっていないので、チェックで弾かれて、投稿ができないようになっているはずである。
+
+これを確認してみよう。実装ができたら `PORT=8000 yarn start` としてサーバーを起動して再度アクセス・ログインのうえ、予定の作成・編集・削除いずれもがまったくできなくなっていることを確認しよう。
+
+では今度は、作成フォームと編集フォームと削除フォームのそれぞれにトークンを埋め込んで、ちゃんと POST リクエストが成功するようにしてみよう。
+
+`views/new.pug` を以下のように編集する。
+
+<details close>
+<summary>views/new.pug</summary>
+
+```diff
+ block content
+   form(method="post", action="/schedules").my-3
++    input(type="hidden" name="_csrf" value!=csrfToken)
+     div.form-group
+       label(for="scheduleName") 予定名
+       input(type="text" name="scheduleName")#scheduleName.form-control
+```
+
+</details>
+
+`views/edit.pug` にも以下の行を追加する。
+
+<details close>
+<summary>views/edit.pug</summary>
+
+```diff
+ block content
+   h3.my-3 予定の編集
+   form(method="post", action=`/schedules/${schedule.scheduleId}?edit=1`)
++    input(type="hidden" name="_csrf" value!=csrfToken)
+     div.form-group
+       label(for="scheduleName") 予定名
+       input(type="text" name="scheduleName" value=schedule.scheduleName)#scheduleName.form-control
+```
+
+```diff
+       button(type="submit").btn.btn-info 以上の内容で予定を編集する
+   h3.my-3 危険な変更
+   form(method="post", action=`/schedules/${schedule.scheduleId}?delete=1`)
++    input(type="hidden" name="_csrf" value!=csrfToken)
+     button(type="submit").btn.btn-danger この予定を削除する
+```
+
+それぞれ `_csrf` というキーで一緒に POST されるようにしている。  
+これが csurf モジュールの使い方である。
+
+</details>
+
+実装ができたら再度アクセスして、予定の作成・編集・削除が問題なくできることを確認しよう。  
+問題なければ　CSRF 脆弱性の対策は完了である。
+
+## ログインできなかった際のリダイレクト機能
+現在の実装で、`http://localhost:8000/schedules/29e8ff4e-6a44-4274-807f-e2999d9c8b72` このような出欠表の URL にアクセスして、GitHub 認証がされていなかった場合を考える。  
+未ログインなので `/login` のログインページにリダイレクトされる。  
+そしてその後ログインすると `http://localhost:8000/` に飛ばされてしまい、元々アクセスしたかった URL 情報は失われてしまう。
+
+これを修正し、ログインの直後にもともとの URL に戻れるように実装しよう。
+
+実装方法としては、ログインページのクエリにリダイレクトしたいパスを含められるようにし、いったん Cookie にログイン後の戻り先を覚えさせて対応する。
+
+まず、`routes/authentication-ensurer.js` を以下のように実装する。
+
+<details close>
+<summary>route/authentication-ensurer.js</summary>
+
+```diff
+ function ensure(req, res, next) {
+   if (req.isAuthenticated()) { return next(); }
+-  res.redirect('/login');
++  res.redirect('/login?from=' + req.originalUrl);
+ }
+```
+
+認証がうまくいかなかった際に、どこにアクセスしようとしたかを、`/login` のクエリに含めた形でリダイレクトしている。
+
+</detais>
+
+次に、`routes/login.js` を以下のように実装する。
+
+<details close>
+<summary>routes/login.js</summary>
+
+```diff
+ const router = express.Router();
+
+ router.get('/', (req, res, next) => {
+-  res.render('login', { user: req.user });
++  const from = req.query.from;
++  if (from) {
++    res.cookie('loginFrom', from, { expires: new Date(Date.now() + 600000)});
++  }
++  res.render('login');
+ });
+```
+
+ログインページ表示時に、どこからログインしようとしたかを、保存期間を 10 分として Cookie に保存してから、ログインページを描画するようにした。
+</details>
+
+そして最後、`app.js` を以下のように実装する。
+
+<details close>
+<summary>app.js</summary>
+
+```diff
+ app.get('/auth/github/callback',
+   passport.authenticate('github', { failureRedirect: '/login' }),
+   function (req, res) {
+-    res.redirect('/');
++    var loginFrom = req.cookies.loginFrom;
++    // オープンリダイレクタ脆弱性対策
++    if (loginFrom &&
++      !loginFrom.includes('http://') &&
++      !loginFrom.includes('https://')) {
++      res.clearCookie('loginFrom');
++      res.redirect(loginFrom);
++    } else {
++      res.redirect('/');
++    }
+   });
+```
+</details>
+
+認証が終わったらこれまでは `/` のルーとパスにリダイレクトしていたが、それを Cookie で保存された URL のパスにリダイレクトするようにする。
+
+なお Cookie の値はユーザーが自由に編集できるのだった。自由に入力ができる部分には脆弱性が生まれがちで、実際にこのような状況で発生する **オープンリダイレクタ脆弱性** というものがある。
+
+そこでここではオープンリダイレクタ脆弱性に対処すべく、`http://` か `https://` ではじまる URL でしかリダイレクトを実施しないように対策している。（教材原文ママ。実際は、`loginFrom` は `%2Fschedules%2Fd9296911-8ac4-4ab9-ad68-8c93038ec7c8` のような値がセットされるので、`http(s)://` を含んでいたら弾く、という作りだと思う）
+
+外部サイトに勝手にリダイレクトさせ、信用あるページであるように見せるような脆弱性が、これで未然に防止される。
+
+以上でサーバを再起動し、 `http://localhost:8000/` にアクセス、ログインしてみよう。
+
+何かの予定表示の URL をメモしてから、ログアウトし、 メモした URL に直接アクセスしてみよう。
+
+ログアウト中なのでログイン画面になる。 そこからログインすると、ログインの後で、予定表示のページが表示されるはず。
+
+以上で問題なければ、予定表示のページの URL を誰かに渡して、 出欠を取る際の利便性が大きくあがる。
+
+これでもう「予定調整くん」は問題なく利用できそうである。
+
+### Heroku への公開
+まずは `app.json` を作成する。
+
+<details close>
+<summary>app.json</summary>
+
+```json
+{
+  "name": "schedule-arranger",
+  "description": "予定調整くん",
+  "logo": "",
+  "keywords": ["node"],
+  "image": "heroku/nodejs"
+}
+```
+</details>
+
+次に `package.json` を編集し、Heroku で使う Node.js のバージョンを記述する。
+
+<details close>
+<summary>package.json</summary>
+
+```diff
+     "supertest": "^3.1.0",
+     "webpack": "^4.26.1",
+     "webpack-cli": "^3.1.2"
+-  }
++  },
++  "engines": {
++    "node": "~10"
++   }
+ }
+```
+
+</details>
+
+`models/sequelize-loader.js` を以下のように実装して、 Heroku のデータベースを使えるようにする。
+
+<details close>
+<summary>models/sequelize-loader.js</summary>
+
+```diff
+ 'use strict';
+ const Sequelize = require('sequelize');
+ const sequelize = new Sequelize(
+-  'postgres://postgres:postgres@localhost/schedule_arranger',
++  process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost/schedule_arranger',
+   {
+     operatorsAliases: false
+   });
+
+ module.exports = {
+```
+</details>
+
+一旦この時点で Heroku にアプリケーションを作り、アップロードをしてしまおう。  
+まずは Git のリポジトリにコミットしよう。
+
+```bash
+git add .
+git commit -am "Heroku対応"
+```
+
+次に、Heroku コマンドでサーバーやデータベースの作成を行う。
+
+```bash
+heroku login -i
+```
+
+以上のコマンドの後にメールアドレスとパスワードを入力して Heroku にログイン。
+
+```
+Logged in as hoge@fuga.com
+```
+
+のように表示されればログイン成功。  
+次は、`heroku create` と入力すれば、 Heroku のサーバーが作成され、作成されたサーバーの URL がターミナルに表示される。
+
+次は Heroku で利用する PostgreSQL の DB を作成する。
+
+```bash
+heroku addons:create heroku-postgresql:hobby-dev
+```
+
+以上のコマンドで開発用の簡易的な　PostgreSQL のデータベースを作成できる。
+
+そうしたら git push コマンドで Heroku にデプロイしてみよう。
+
+```bash
+# master-2019 はローカルのブランチ名
+git push heroku master-2019:master
+```
+
+デプロイが終わったら、先ほど heroku create して作成したサーバーの URL にアクセスして、トップページが表示できれば問題ない。
+
+そして次は、GitHub 認証のために、本番の環境の GitHub のアプリケーh村として登録する。  
+GitHub のアプリケーションの登録は、コールバックするための URL やサイトの説明の都合上、開発用のものと別なものを利用する必要がある。
+
+GitHub にログイン後、`https://github.com/settings/applications/new` にアクセスし、
+
+- Application name を、予定調整くん
+- Homepage URL を、`https://xxx-xxxxxxx-XXXXXX.herokuapp.com/`（先ほど Heroku で作成した自分のアプリケーションのもの）
+- Application description を、GitHub認証を利用して予定を調整してくれるアプリケーション
+- Authorization callback URL を、 `https://xxx-xxxxxxx-XXXXXX.herokuapp.com/auth/github/callback`
+
+以上の通りに設定し、アプリケーション登録をする。登録後の画面の Client ID と Client Secret は以下で使用する。
+
+次に、 本番環境の URL と GitHub のアプリケーションの Client ID と Client Secret を Heroku の環境変数として登録していく。
+
+```bash
+heroku config:set HEROKU_URL='https://xxx-xxxxxxx-XXXXXX.herokuapp.com/'
+heroku config:set GITHUB_CLIENT_ID='000000000000000000'
+heroku config:set GITHUB_CLIENT_SECRET='000000000000000000000000000000000'
+```
+
+以上のようにコンソールに入力して登録する。
+そして、 `app.js` を編集し、この環境変数を利用できるように修正する。
+
+<details close>
+<summary>app.js</summary>
+
+```diff
+ });
+
+ var GitHubStrategy = require('passport-github2').Strategy;
+-var GITHUB_CLIENT_ID = '2f831cb3d4aac02393aa';
+-var GITHUB_CLIENT_SECRET = '9fbc340ac0175123695d2dedfbdf5a78df3b8067';
++var GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || '2f831cb3d4aac02393aa';
++var GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '9fbc340ac0175123695d2dedfbdf5a78df3b8067';
+
+ passport.serializeUser(function (user, done) {
+   done(null, user);
+```
+
+</details>
+
+以上で、 Client ID と Client Secret として環境変数で指定されたものが使われるようになった。
+
+<details close>
+<summary>app.js</summary>
+
+```diff
+ passport.use(new GitHubStrategy({
+   clientID: GITHUB_CLIENT_ID,
+   clientSecret: GITHUB_CLIENT_SECRET,
+-  callbackURL: 'http://localhost:8000/auth/github/callback'
++  callbackURL: process.env.HEROKU_URL ? process.env.HEROKU_URL + 'auth/github/callback' : 'http://localhost:8000/auth/github/callback'
+ },
+```
+</details>
+
+以上が、コールバックして GitHub から情報を戻す URL となる。
+
+では以上の内容を反映するため、再度 Heroku にデプロイを行おう。
+
+```bash
+git commit -am "Herokuの環境変数を利用できるように修正"
+git push heroku master-2019:master
+```
+
+以上の git コマンドを使い、`remote: Verifying deploy... done.` と表示されたら終了です。
+Heroku の URL に再度アクセスして、この「予定調整くん」の要件である、
+
+- 予定を作れる
+- 予定に候補が作れる
+- 予定の候補に対して出欠を編集できる
+- 予定に対してコメントが編集できる
+- 予定を削除できる
+- 予定を編集できる
+
+これらがちゃんと動作するかを試してみよう。
+この検証が終われば「予定調整くん」は完成。
+
+これで長かった「予定調整くん」の開発はすべて終わり！
+また、入門コースの開発もこれで全て終わり！！！
