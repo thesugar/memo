@@ -164,7 +164,7 @@ const readline = require('readline')
 この部分は、Node.js に用意された **モジュール** を呼び出している。
 
 `fs` は FileSystem の略で、ファイルを扱うためのモジュール。
-`readline` は、ファイルを一行ずつ読み込むためのモジュー売る。
+`readline` は、ファイルを一行ずつ読み込むためのモジュール。
 
 ```js
 const rs = fs.createReadStream('./popu-pref.csv');
@@ -395,6 +395,128 @@ console.log(s.add([1, 2, 3, 4]));
 ```
 
 ## モジュール化された処理
+
+以前取り組んだ際には Map を使っているが、今回はオブジェクトの配列で処理する。
+
+また、`assert.equal` ならびに `assert.deepEqual` は deprecated であり、`assert.strictEqual`、`assert.deepStrictEqual` を使う（厳密等価比較）。
+
+また、教材には組み込まれていないが、TypeScript で書いてみる。
+
+プロジェクトへの TS 導入は[TypeScript + Node.js プロジェクトのはじめかた2020](https://qiita.com/notakaos/items/3bbd2293e2ff286d9f49)が参考になる。
+
+1. yarn add --dev typescript @types/node@10 # ここは node のバージョンに合わせる
+1. npx tsc --init
+1. tsconfig.json を修正（target, sourceMap, outDir 等）
+1. npx tsc で ts を js にコンパイルできる
+  - ts-node などを使えばコンパイルまわりの開発効率をあげることができる
+
+```ts
+'use strict'
+
+type Task = {
+    name: string,
+    state: boolean,
+}
+
+const tasks: Task[] = []
+
+/**
+ * TODO を追加する
+ * @param {string} task 
+ */
+const add = (taskName: string) => {
+    tasks.push({ name: taskName, state: false })
+}
+
+/**
+ * タスクと完了したかどうかが含まれるオブジェクトを受け取り、完了したかを返す
+ * @param {object} task
+ * @return {boolean} 完了したかどうか
+ */
+const isDone = (task: Task): boolean => {
+    return task.state
+}
+
+/**
+ * タスクと完了したかどうかが含まれるオブジェクトを受け取り、完了していないかを返す
+ * @param {object} task 
+ * @return {boolean} 完了したかどうか
+ */
+const isNotDone = (task: Task): boolean => {
+    return !isDone(task)
+}
+
+/**
+ * TODO 一覧の配列を取得する
+ * @returns {array}
+ */
+const list = (): string[] => {
+    return tasks
+        .filter(task => isNotDone(task))
+        .map(task => task.name)
+}
+
+/**
+ * TODO を完了状態にする
+ * @param {string} taskName
+ */
+const done = (taskName: string) => {
+    const indexFound: number = tasks.findIndex(task => task.name === taskName)
+    if (indexFound !== -1) {
+        tasks[indexFound].state = true
+    }
+}
+
+/**
+ * 完了済みのタスクの一覧の配列を取得する
+ * @return {array}
+ */
+const donelist = (): string[] => {
+    return tasks.filter(isDone).map(task => task.name)
+}
+
+/**
+ * 項目を削除する
+ * @param {string} taskName 
+ */
+const del = (taskName: string) => {
+    const indexFound: number = tasks.findIndex(task => task.name === taskName)
+    if (indexFound !== -1) {
+        tasks.splice(indexFound, 1)
+    }
+}
+
+module.exports = { add, list, done, donelist, del }
+```
+
+テストコード
+
+```js
+'use strict'
+
+const todo = require('./dist/index.js')
+const assert = require('assert')
+
+// add と list のテスト
+todo.add('ノートを買う')
+todo.add('鉛筆を買う')
+assert.deepStrictEqual(todo.list(), ['ノートを買う', '鉛筆を買う'])
+
+// done と donelist のテスト
+todo.done('鉛筆を買う')
+assert.deepStrictEqual(todo.list(), ['ノートを買う'])
+assert.deepStrictEqual(todo.donelist(), ['鉛筆を買う'])
+
+// del のテスト
+todo.del('ノートを買う')
+todo.del('鉛筆を買う')
+assert.deepStrictEqual(todo.list(), [])
+assert.deepStrictEqual(todo.donelist(), [])
+
+console.log('テストが正常に完了しました')
+```
+
+## モジュール化された処理（旧）
 CRUD を考え、以下の機能を持つモジュールを作成する。
 
 - todo: タスクの作成
@@ -628,6 +750,26 @@ for (let count = 0; count < 500; count++) {
 
 以上のように順番が乱れて表示される。*これが非同期 I/O である*。非同期 I/O は「I/O の処理がひとつ終わってから、次の I/O の処理を行う」ことを保証していない。そのため、このように順不同になる性質がある。その反面、CPU を効率よく利用することができる。
 
+これを「あいうえお」と正しく表示されるようにするためには、上記のコールバック関数のところを入れ子にして
+
+```js
+fs.appendFile(fileName, 'あ', 'utf8', () => {
+  fs.appendFile(fileName, 'い', 'utf8', () => {
+    fs.appendFile(fileName, 'う', 'utf8', () => {
+      fs.appendFile(fileName, 'え', 'utf8', () => {
+        fs.appendFile(fileName, 'お', 'utf8', () => {
+          fs.appendFile(fileName, '\n', 'utf8', () => {});
+        });
+      });
+    });
+  });
+});
+```
+
+このようにすれば一行分の「あいうえお」は正しく表示される。しかし、これをループで回すとやはり非同期処理が行われるので「ああああ・・いいい・・・」と並ぶファイルが出力されてしまう。
+
+また、コードもコールバック地獄の様相を呈する。
+
 では、これを直すためにはどうすればよいか？
 
 ### 同期 I/O を使った実装
@@ -657,7 +799,309 @@ for (let count = 0; count < 500; count++) {
 ・・・
 ```
 
-## 永続化処理と例外処理
+ここでは、fs モジュールが用意してくれていた同期関数と非同期関数を使ったが、これらを自分で実装したいときはどうする？
+
+### Promise
+
+Promise: 非同期に実行される未来の結果を表すオブジェクト。Promise から値を取得する際には、then 関数を呼び、そこに実行完了後呼び出されてほしい関数を与えることによって未来の結果を利用する。
+
+Promise オブジェクトは自分で作ることもできる。また、複数の Promise オブジェクトをまとめた Promise を作ることもできるし、例外を含む結果を扱うことができる機能も持っている。
+
+**promise-test.js**
+
+```js
+'use strict';
+
+const waitPromise = new Promise((resolve, reject) => {
+  setTimeout(() => resolve(), 1000);
+});
+
+waitPromise.then(() => console.log('hoge'));
+console.log('fuga');
+```
+
+これは fuga, hoge の順番で出力sあれる。
+
+### Promise で値を返してみる
+
+```js
+'use strict';
+
+new Promise((resolve) => {
+  const nowDate = new Date();
+  resolve(nowDate);
+}).then((v1) => {
+  // v1 は 現在の時刻情報
+  new Promise((resolve) => {
+    const monthAndDate = {
+      month: v1.getMonth(),
+      date: v1.getDate()
+    }
+    resolve(monthAndDate);
+  }).then((v2) => {
+    // v2 は 日付の情報
+    new Promise((resolve) => {
+      const text = `今日は${v2.month+1}月${v2.date}日です。`;
+      resolve(text);
+    }).then((v3) => {
+      // v3 は 日付を示す文章
+      console.log(v3); // 今日の日付に関する文章が出力される
+    });
+  });
+});
+```
+
+上記コードは、then メソッドに渡すコールバック関数でさらにコールバック関数を呼んでいるため、コールバック地獄になっている。
+
+### Promise チェーンを利用した書き直し
+
+ここまでは、非同期の処理の結果を引数に持つ関数を then に渡して結果を利用sるうことしか紹介していなかった。
+
+しかし、この then 関数の引数に渡す関数では、return で値を返すことができる。
+また仮にその return で返す値が Promise であっても問題なく処理を行ってくれるという特徴を持ち合わせている。
+
+```js
+'use strict';
+
+new Promise((resolve) => {
+  const nowDate = new Date();
+  resolve(nowDate);
+})
+  .then((v1) => {
+    // v1 は 現在の時刻情報
+    const monthAndDate = {
+      month: v1.getMonth(),
+      date: v1.getDate()
+    }
+    return new Promise((resolve) => {
+      resolve(monthAndDate);
+    });
+  })
+  .then((v2) => {
+    // v2 は 日付の情報
+    const text = `今日は${v2.month+1}月${v2.date}日です。`;
+    return new Promise((resolve) => {
+      resolve(text);
+    });
+  })
+  .then((v3) => {
+    // v3 は 日付を示す文章
+    console.log(v3); // 今日の日付に関する文章が出力される
+  });
+```
+
+今回のコードのように、Promise の結果を用いてさらに Promise をつなげる方法のことを Promise チェーンと呼ぶ。
+
+ではこの Promise チェーンを使って fs.appendFile で同期処理をさせられるだろうか。  
+おそらく以下のようになるが、やはり for 文の次のループ処理を then にかけず苦労する。
+
+```js
+'use strict';
+const fs = require('fs');
+const fileName = './test.txt';
+
+function appendFilePromise(fileName, str) {
+  return new Promise((resolve) => {
+    fs.appendFile(fileName, str, 'utf8', () => resolve());
+  });
+}
+
+for (let count = 0; count < 500; count++) {
+  appendFilePromise(fileName, 'あ')
+    .then(() => {
+      return appendFilePromise(fileName, 'い');
+    })
+    .then(() => {
+      return appendFilePromise(fileName, 'う');
+    })
+    .then(() => {
+      return appendFilePromise(fileName, 'え');
+    })
+    .then(() => {
+      return appendFilePromise(fileName, 'お');
+    })
+    .then(() => {
+      return appendFilePromise(fileName, '\n');
+    });
+}
+```
+
+一応、以前までの Promise の状態を変数としてもつことで解決できますが、綺麗な書き方にはならない。
+
+このような場合はどのようにしたらいいだろうか。
+
+### async / await
+
+```js
+'use strict';
+const fs = require('fs');
+const fileName = './test.txt';
+
+function appendFilePromise(fileName, str) {
+  return new Promise((resolve) => {
+    fs.appendFile(fileName, str, 'utf8', () => resolve());
+  });
+}
+async function main() {
+  for (let count = 0; count < 500; count++) {
+    await appendFilePromise(fileName, 'あ');
+    await appendFilePromise(fileName, 'い');
+    await appendFilePromise(fileName, 'う');
+    await appendFilePromise(fileName, 'え');
+    await appendFilePromise(fileName, 'お');
+    await appendFilePromise(fileName, '\n');
+  }
+}
+
+main();
+```
+
+まず `async function` で `main` が非同期関数であることを宣言しています。これを行うことで、`main` 関数内で `await` 演算子が使えるようになる。
+厳密には異なりますが、結果として `async function` は `Promise` オブジェクトを返す。
+
+次に for 文内では、`appendFilePromise` を `await` 演算子を用いて処理が完了するのを待機している。
+`await` 演算子によって、Promise の完了を待ってから次の行の処理へ移るようになる。
+
+## 永続化処理と例外処理（新）
+
+旧 のコード（後掲）との違いは、上記と同じく、「Map を使って、都度 Array.from などを使って配列に変換して操作していたのを、オブジェクトの配列を使うように変更したこと」、「ts を使ってみたこと」、「deepEqual を deepStrictEqual に書き直したこと（テストコード）」。
+
+**index.ts**
+
+```ts
+'use strict'
+
+type Task = {
+    name: string,
+    state: boolean,
+}
+
+let tasks: Task[] = []
+
+const fs = require('fs')
+const fileName = './tasks.json'
+
+
+// 同期的にファイルから復元
+try {
+    const data = fs.readFileSync(fileName, 'utf8')
+    tasks = JSON.parse(data)
+} catch (ignore) {
+    console.log(fileName + 'から復元できませんでした')
+}
+
+/**
+ * タスクをファイルに保存する
+ */
+const saveTasks = () => {
+    fs.writeFileSync(fileName, JSON.stringify(tasks), 'utf8')
+}
+
+/**
+ * TODO を追加する
+ * @param {string} task 
+ */
+const add = (taskName: string) => {
+    tasks.push({ name: taskName, state: false })
+    saveTasks()
+}
+
+/**
+ * タスクと完了したかどうかが含まれるオブジェクトを受け取り、完了したかを返す
+ * @param {object} task
+ * @return {boolean} 完了したかどうか
+ */
+const isDone = (task: Task): boolean => {
+    return task.state
+}
+
+/**
+ * タスクと完了したかどうかが含まれるオブジェクトを受け取り、完了していないかを返す
+ * @param {object} task 
+ * @return {boolean} 完了したかどうか
+ */
+const isNotDone = (task: Task): boolean => {
+    return !isDone(task)
+}
+
+/**
+ * TODO 一覧の配列を取得する
+ * @returns {array}
+ */
+const list = (): string[] => {
+    return tasks
+        .filter(task => isNotDone(task))
+        .map(task => task.name)
+}
+
+/**
+ * TODO を完了状態にする
+ * @param {string} taskName
+ */
+const done = (taskName: string) => {
+    const indexFound: number = tasks.findIndex(task => task.name === taskName)
+    if (indexFound !== -1) {
+        tasks[indexFound].state = true
+        saveTasks()
+    }
+}
+
+/**
+ * 完了済みのタスクの一覧の配列を取得する
+ * @return {array}
+ */
+const donelist = (): string[] => {
+    return tasks.filter(isDone).map(task => task.name)
+}
+
+/**
+ * 項目を削除する
+ * @param {string} taskName 
+ */
+const del = (taskName: string) => {
+    const indexFound: number = tasks.findIndex(task => task.name === taskName)
+    if (indexFound !== -1) {
+        tasks.splice(indexFound, 1)
+        saveTasks()
+    }
+}
+
+module.exports = { add, list, done, donelist, del }
+```
+
+**test.js**
+
+```js
+'use strict'
+
+const assert = require('assert')
+
+// テストの前に永続化されているファイルを消す（unlink）
+const fs = require('fs')
+fs.unlink('./tasks.json', err => {
+    const todo = require('./dist/') // こう書けば './dist/index.js' を読み込む。明示的に index.js まで書いてもよい。
+
+    // add と list のテスト
+    todo.add('ノートを買う')
+    todo.add('鉛筆を買う')
+    assert.deepStrictEqual(todo.list(), ['ノートを買う', '鉛筆を買う'])
+
+    // done と donelist のテスト
+    todo.done('鉛筆を買う')
+    assert.deepStrictEqual(todo.list(), ['ノートを買う'])
+    assert.deepStrictEqual(todo.donelist(), ['鉛筆を買う'])
+
+    // del のテスト
+    todo.del('ノートを買う')
+    todo.del('鉛筆を買う')
+    assert.deepStrictEqual(todo.list(), [])
+    assert.deepStrictEqual(todo.donelist(), [])
+
+    console.log('テストが正常に完了しました')
+})
+```
+
+## 永続化処理と例外処理（旧）
 
 [モジュール化された処理](##モジュール化された処理) の部分で実装した todo パッケージに、永続化処理と例外処理を追加する。
 
@@ -928,7 +1372,8 @@ console.info('[' + new Date() + '] Requested by ' + req.connection.remoteAddress
 
 （curl でなくて）ブラウザ（Chrome）からのアクセスの場合は、このようなログが 2 行出力される。なぜなら、Chrome が URL にアクセスすると、`/favicon.ico` というパスに、アイコン画像がないか確認しにいくためである。そのため、ログは 2 回記録される。
 
-*以下は仮想マシン（VirtualBox）を使っている前提での解説* : また、（curl ではなく）ブラウザからアクセスすると IP アドレスは `::ffff:10.0.2.2` のように表示される。これは、VirtualBox（仮想化のアプリケーション）の仕組みのため。仮想的なネットワークを使ってホストとなる OS とゲストとなる Ubuntu を別の麻疹と認識し、それぞれ IP を割り当てているため。つまり、Mac のホスト OS から、VirtualBox を経由してゲスト OS の HTTP サーバーにアクセスするので `10.0.2.2` のようになる。（*コンテナを使った場合は、ホスト OS = ゲストOS なので、ブラウザからアクセスしても 127.0.0.1 になる？試していないからわからない*）
+*以下は仮想マシン（VirtualBox）を使っている前提での解説* : また、（curl ではなく）ブラウザからアクセスすると IP アドレスは `::ffff:10.0.2.2` のように表示される。これは、VirtualBox（仮想化のアプリケーション）の仕組みのため。仮想的なネットワークを使ってホストとなる OS とゲストとなる Ubuntu を別のマシンと認識し、それぞれ IP を割り当てているため。つまり、Mac のホスト OS から、VirtualBox を経由してゲスト OS の HTTP サーバーにアクセスするので `10.0.2.2` のようになる。 ~~（*コンテナを使った場合は、ホスト OS = ゲストOS なので、ブラウザからアクセスしても 127.0.0.1 になる？試していないからわからない*）~~  
+-> コンテナを使った場合も、ブラウザからアクセスすると `::ffff:172.17.0.1` のように IP アドレスが表示される。
 
 半面、Curl を用いた場合は、HTTP サーバを立てているゲスト OS 自身からのリクエストになるので `127.0.0.1` となる。
 
@@ -970,6 +1415,47 @@ Listening on 8000
 
 のようにログがファイルに出力されている。
 
+### ファイル記述子について
+
+ログをファイルに残すコマンド
+
+```shell
+node index.js 2>&1 | tee -a application.log
+```
+
+の 2>&1 の部分は一体どういう意味か？ これを理解するためには、ファイル記述子について知っておく必要がある。
+
+PC のシステムを管理している OS は、ストリームを使ってファイルを操作する。ストリームとは英語で「川」や「流れ」を意味する単語だが、まさに川の水の流れのように、ファイルの中身を OS 側に渡したり（read）逆に OS 側がファイルの中身へとデータを流したり（write）する。  
+ストリームは、OS がファイルを読み書きする場面だけでなく、ファイル間のデータの受け渡しでも使われる。例えば、
+
+```shell
+node index.js 2>&1 | tee -a application.log
+```
+
+の
+`node index.js 2>&1` と `tee -a application.log` は パイプ で繋がれている。このパイプは、`node index.js 2>&1` の標準出力を `tee -a application.log` の標準入力にするという役割があるが、その受け渡しも実はストリームが担っている。
+
+さて、このストリームが現在どのファイルを操作しているのかを識別するために、ファイル記述子という識別子が用意されている。ファイル記述子の中身は、ただの整数値。  
+OS は PC が起動している間にたくさんのファイルを同時に扱っているため、この整数値である識別子を使ってファイルを区別する必要がある。  
+特に、Linux の入出力 である標準入力・標準出力・標準エラー出力に対しては、以下のようにファイル記述子が固定されている。
+
+|入出力の種類|ファイル記述子|
+|--|--|
+|標準入力|0|
+|標準出力|1|
+|標準エラー出力|2|
+
+ここまで来ると `2>&1` の意味が明らかになってくる。`2>&1` は「ファイル記述子 2 番を 1 番にリダイレクトさせる」、すなわち「標準エラー出力を標準出力にリダイレクトさせる」という操作を指す。
+
+なぜこのような操作が必要なのか？ それは、`2>&1` を取り払った
+
+```shell
+node index.js | tee -a application.log
+```
+
+と比較してみるとわかる。このコマンドの場合、`node index.js` の標準出力のみが `tee -a application.log` に受け渡され、application.log に保存される。一方、標準エラー出力はデフォルトではターミナルに受け渡されるので、エラーの表示自体はされるが application.log には保存されない。  
+これでは「サーバーのエラーログを残す」という元々の目的を達成できない。したがって、`2>&1` と書いて、標準エラー出力を標準出力にリダイレクトさせることが必要になる。
+
 ## HTTP のメソッド
 **HTTP メソッド** とは、HTTP のリクエストの種類。HTTP 1.1 のリクエストは 8 種類ある。
 
@@ -981,6 +1467,24 @@ Listening on 8000
 |DELETE|削除|Delete|動画を削除する|
 
 この他にも、HEAD と OPTIONS と TRACE と CONNECT というメソッドがある。
+
+### REST
+
+REST はレストと読み、HTTP を使ったデータ通信方法や、HTTPメソッドの設計に沿った考え方のことを指す。元々は REpresentational State Transfer だったものが省略されて表記されたもの。
+
+HTTP の標準化を行なったロイ・トーマス・フィールディングによって REST は以下の 6 点で定義されている。
+
+- クライアント／サーバ構成であること
+- 前後の状態に依らない、ステートレスであること
+- キャッシュを備えていること
+- HTTP メソッドのように、統一的なインタフェースであること
+- 階層的なシステムであること
+- クライアントがプログラムを実行できること
+
+これに沿って HTTP は設計されたというわけである。  
+一般にこの定義を守ったものを RESTful と呼ぶ。
+
+ここでは詳しい説明は [Wikipedia](https://ja.wikipedia.org/wiki/Representational_State_Transfer) や[論文(英語)](https://www.ics.uci.edu/~fielding/pubs/dissertation/top.htm)を読んでみよ。
 
 ### 実装
 
