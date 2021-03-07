@@ -170,3 +170,228 @@
 <p>ここで、クラス <code>0</code> は<em>所得 &lt;= 50k</em> を意味し、クラス <code>1</code> は<em>所得 &gt; 50k</em> を意味します。</p>
 <aside class="special"><p><strong>注:</strong> AI Platform はバッチ予測もサポートしていますが、このラボでは説明しません。詳細については、バッチ予測に関するドキュメントをご覧ください。</p>
 </aside>
+
+
+# Dataprep: Qwik Start
+
+**Dataprocではないので注意**
+
+<p><a href="https://cloud.google.com/dataprep/">Google Cloud Dataprep</a> は、分析用データの可視的な探索、クリーニング、準備を行うためのサーバーレスなインテリジェント データ サービスで、どんな規模でも稼働します。インフラストラクチャのデプロイや管理は必要ありません。コードも不要で、クリックするだけで簡単にデータを準備できます。</p>
+<p>このラボでは Dataprep を使って、データセットのインポート、不一致データの修正、データの変換、データの結合を行います。初めてご利用の場合でも、ラボの終了時にはすべての操作を行えるようになります。</p>
+
+<h2 id="step3">プロジェクトでの Cloud Storage バケットの作成</h2>
+<ol>
+<li>
+<p>Cloud Platform で、<strong>ナビゲーション メニュー</strong> &gt; [<strong>Storage</strong>] &gt; [<strong>ブラウザ</strong>] の順に選択します。
+<img alt="nav_storage.png" src="https://cdn.qwiklabs.com/OOFTVa9%2B3ahdzF6URCmTlQEFBPAOVXfNAn9vyAde3Jc%3D"></p>
+</li>
+<li>
+<p>[<strong>バケットを作成</strong>] をクリックします。</p>
+</li>
+<li>
+<p>[<strong>バケットを作成</strong>] ダイアログの [<strong>名前</strong>] でバケットに一意の名前を付けます。<a href="https://cloud.google.com/storage/docs/bucket-naming#requirements">バケット名の要件</a>を参照してください。その他の設定はすべてデフォルト値のままにします。</p>
+<img alt="my-bucket.png" src="https://cdn.qwiklabs.com/gjo2TbsHELeXCzGV2p9a1RK5m8p5XdQ90wQz3yz5fF4%3D">
+</li>
+<aside>バケットの命名の詳細については、<a href="https://cloud.google.com/storage/docs/bucket-naming%5C#requirements" target="_blank">バケット名の要件</a>を参照してください</aside>
+<li>
+<p>[<strong>作成</strong>] をクリックします。</p>
+</li>
+</ol>
+<p>バケットを作成できました。後の手順で使用するため、バケット名をメモしておきます。</p>
+
+<h2 id="step4">Cloud Dataprep の初期化</h2>
+<ol>
+<li>
+<strong>[ナビゲーション メニュー]</strong> &gt; [<strong>Dataprep</strong>] の順に選択します。</li>
+<li>チェック ボックスをオンにして、Google Dataprep の利用規約に同意し、[<strong>同意する</strong>] をクリックします。</li>
+<li>アカウント情報を Trifacta と共有することを承認するため、[<strong>同意して続行</strong>] をクリックします。</li>
+<li>[<strong>許可</strong>] をクリックして、Trifacta がプロジェクトのデータにアクセスすることを許可します。</li>
+<li>GCP のユーザー名をクリックして、Cloud Dataprep by Trifacta にログインします。GCP のユーザー名は、[Connection Details] パネルの [<strong>Username</strong>] です。</li>
+<li>[<strong>許可</strong>] をクリックして、GCP ラボのアカウントに Cloud Dataprep へのアクセスを許可します。</li>
+<li>チェックボックスをオンにし、[<strong>Accept</strong>] をクリックして Trifacta の利用規約に同意します。</li>
+<li>[First time set up] 画面で [<strong>Continue</strong>] をクリックして、デフォルトのストレージの場所を作成します。</li>
+</ol>
+<p><img alt="937d6677b5e75d9d.png" src="https://cdn.qwiklabs.com/683VTyhfFDoqvOtciyH73it%2FEkDN5JW%2FemL9jXT%2Bqew%3D"></p>
+<p>Dataprepが新しいブラウザータブで開きます。 ようこそページで、右上の <strong>Hide tour</strong> をクリックします。</p>
+
+<h2 id="step5">フローの作成</h2>
+<p>Cloud Dataprep では、<code>flow</code> ワークスペースを使用してデータセットにアクセスし、操作します。</p>
+<ol>
+<li>右上にある [<strong>Create Flow</strong>] をクリックします。</li>
+</ol>
+<p><img alt="dataprep_create_flow.png" src="https://cdn.qwiklabs.com/pPXJS3TfQZ5k9vXvmEugmFZV0jdPnNY%2F0IqJQzR7hfg%3D"></p>
+<ol start="2">
+<li>フローの名前と説明を入力します。このラボでは、<a href="https://www.fec.gov/data/browse-data/?tab=bulk-data">米国連邦選挙委員会 2016</a> のデータを使用しているため、[Flow Name] に「FEC-2016」、[Flow Description] に「米国連邦選挙委員会 2016」と入力します。</li>
+</ol>
+<p><img alt="656369ed7d46b2dc.png" src="https://cdn.qwiklabs.com/1JxXr%2BI%2B2XHwGjcZpgyUZVb28RkeNNLhlhfBRRYFEd8%3D"></p>
+<ol start="3">
+<li>[<strong>Create</strong>] をクリックします。</li>
+</ol>
+<p>FEC-2016 フローのページが表示されます。[What's a flow?] のスライドをスクロールすると、次の作業の概要を確認できます。[<strong>Don't show me any helpers</strong>] をクリックしてスキップすることも可能です。</p>
+<h2 id="step6">データセットのインポート</h2>
+<p>このセクションでは、データをインポートして、FEC-2016 フローに追加します。</p>
+<ol>
+<li>[<strong>Import &amp; Add Datasets</strong>] をクリックします。</li>
+</ol>
+<p><img alt="Dataprep_importandadd.png" src="https://cdn.qwiklabs.com/UHSReu92K7XpbpMDU1e7Rj7413ICk%2B8legdU12McZjE%3D"></p>
+<ol start="2">
+<li>左のメニューパネルで、Google Cloud Storage からデータセットをインポートするために [<strong>GCS</strong>] を選択します。次に、鉛筆のアイコンをクリックしてファイルのパスを編集します。</li>
+</ol>
+<p><img alt="dataprep_choose_file1.png" src="https://cdn.qwiklabs.com/TSeO9tpjFfoVja0DJjURWYWSZByIFAuz3j0uX8GvPnc%3D"></p>
+<ol start="3">
+<li>[<strong>Choose a file or folder</strong>] テキスト ボックスに「<code>gs://spls/gsp105</code>」と入力して、[<strong>Go</strong>] をクリックします。</li>
+</ol>
+<p>[<strong>Go</strong>] および [<strong>Cancel</strong>] のボタンが表示されるように、必要に応じてブラウザ ウィンドウを広げてください。</p>
+<ol start="4">
+<li>
+<p>cn-2016.txt の横にある [<strong>+</strong>] アイコンをクリックすると、データセットが作成されて右側のパネルに表示されます。データセットのタイトルをクリックして、名前を「Candidate Master 2016」に変更します。</p>
+</li>
+<li>
+<p>同様に、itcont-2016.txt のデータセットを追加し、名前を「Campaign Contributions 2016」に変更します。</p>
+</li>
+<li>
+両方のデータセットが右側のペインに表示されたら、[<strong>Import &amp; Add to Flow</strong>] をクリックします。
+</li>
+</ol>
+<p><img alt="4e126e9b671a7722.png" src="https://cdn.qwiklabs.com/dQ3zTrEHhwVZnUJTvV3U%2Bazq5YT15qPiuq0lf38bRAw%3D"></p>
+<p>2 つのデータセットがフローとして表示されます。</p>
+<p><img alt="FEC-2016.png" src="https://cdn.qwiklabs.com/aWqb85gyr84iT6ed629r4E4xnyr3wqECzVSLRvW4KYA%3D"></p>
+<h2 id="step7">候補者ファイルの準備</h2>
+<ol>
+<li>デフォルトで、[Candidate Master 2016] データセットが選択されています。右側のパネルで、[<strong>Add New Recipe</strong>] をクリックします。</li>
+</ol>
+<p><img alt="dataprep_add_new_rec.png" src="https://cdn.qwiklabs.com/PhqJTmQAcBFK9TlzwKnIuktxlSTwvac6B476qDBUeJY%3D"></p>
+<ol start="2">
+<li>[<strong>Edit Recipe</strong>] をクリックします。</li>
+</ol>
+<p><img alt="dataprep_edit_rec.png" src="https://cdn.qwiklabs.com/lUQ2xOXyveFwtba3rszgh%2BDL61KrjmOYMMtKvbsWj6k%3D"></p>
+<p>[Candidate Master 2016-2 Transformer] ページがグリッドビューで開きます。</p>
+<p><img alt="dataprep_transformer.png" src="https://cdn.qwiklabs.com/i%2B7KE1QO7TyaaGGqrfQIH1B%2FWUIX1MMPSpGbPD5ora8%3D"></p>
+<p>Transformer ページでは、変換レシピを作成して、サンプルに適用された結果を確認できます。表示内容に問題がなければ、データセットに対してジョブを実行します。</p>
+<p>各列の見出しには、データ型が指定された名前と値があります。データ型は、旗のアイコンをクリックすると表示されます。</p>
+<p><img alt="datatypes.png" src="https://cdn.qwiklabs.com/np%2B84KqotZFP2Vm9pfBSUhQ2QApRI3El5anSZ%2B02Rfs%3D"></p>
+<p>フラグオプションをクリックすると、右側に[<strong>Details</strong>]パネルも開きます。</p>
+<p><img alt="details_panel.png" src="https://cdn.qwiklabs.com/woQN8qYyLVpoB4xAf99Othuc7kz8t%2BeD2HfL%2BgbfL1Q%3D"></p>
+<p>詳細パネルの右上にある[<strong>X</strong>] をクリックして、詳細パネルを閉じます。</p>
+<p>次の手順では、グリッドビューでデータを探索し、レシピに変換手順を適用します。</p>
+<ol>
+<li>Column5 には、1990～2064 年のデータがあります。スプレッドシートで行うように [column5] の幅を広げると、年を細かく分けることができます。最も背の高いビン（2016 年）をクリックして選択します。</li>
+</ol>
+<p><img alt="Dataflow_column_5.png" src="https://cdn.qwiklabs.com/F1UOclmgih%2BHGec3LqFKr8VTzJuBQex3CZSbivabPC8%3D"></p>
+<p>すると、これらの値が選択されたステップが作成されます。</p>
+<ol start="2">
+<li>右側の [<strong>Suggestions</strong>] パネルの [<strong>Keep rows</strong>] セクションで [<strong>Add</strong>] をクリックし、このステップをレシピに追加します。</li>
+</ol>
+<p><img alt="9a6a7c2c7888f3c6.png" src="https://cdn.qwiklabs.com/lplTJs%2BDH%2F8o82y2C%2FTFRQq7BhJwMkUpV2K62aU1pF4%3D"></p>
+<p>右側のレシピパネルに次のステップが追加されます。</p>
+<p><code>Keep rows where(date(2016, 1, 1) &lt;= column5) &amp;&amp; (column5 &lt; date(2018, 1, 1))</code></p>
+<ol start="3">
+<li>Column6（State）で、ヘッダーの不一致（赤色）部分にカーソルを合わせてクリックし、不一致の行を選択します。</li>
+</ol>
+<p><img alt="3cdb3803ef49636b.png" src="https://cdn.qwiklabs.com/J4An%2BqPwdGNzAdgSvOWakFOE%2FnrgJ%2B7ijW4SGJBch38%3D"></p>
+<p>下にスクロールして不一致の値を見つけます。ほとんどのレコードで column7 には「P」、column6 には「US」という値があることがわかります。不一致が発生するのは、column6 が「State」列（フラグアイコンで示される）としてマークされている一方で、State 以外（「US」など）の値があるからです。</p>
+<ol start="4">
+<li>不一致を修正するには、提案パネルの上部にある[<strong>X</strong>]をクリックして変換をキャンセルし、Column6のフラグアイコンをクリックしてString列に変更します。</li>
+</ol>
+<p><img alt="84cfd42fcab33662.png" src="https://cdn.qwiklabs.com/lZtnUvD5I6KCDVJ4Zot5dmDC1KkektpgBlQgF7OO4pc%3D"></p>
+<p>これで不一致がなくなり、列マーカーが緑色になります。</p>
+<ol start="5">
+<li>大統領候補者のみになるようにフィルタします。column7 の値が「P」のレコードが大統領候補者です。column7 のヒストグラムで 2 つのビンにカーソルを合わせ、どちらが「H」でどちらが「P」かを確認します。「P」のビンをクリックします。</li>
+</ol>
+<p><img alt="328626b128b93f1.png" src="https://cdn.qwiklabs.com/CIUuZWVWsWWQD3xJhQfJhm0qSoFcBK0cYUTpAnxpTbc%3D"></p>
+<ol start="6">
+<li>右側の提案パネルで、[<strong>Add</strong>] をクリックして、レシピへのステップを受け入れます。</li>
+</ol>
+<p><img alt="Dataprep_row_7" src="https://cdn.qwiklabs.com/vPIQ8e25%2FibBMpAF9J%2Bq9tWd%2FEqW1C6Tbj6xM0OlZAo%3D"></p>
+<h2 id="step8">献金ファイルの結合</h2>
+<p>結合ページでは、現在のデータセットを別のデータセットまたはレシピに追加できます。この処理は両方のデータセットに共通する情報に基づいて行われます。</p>
+<p>献金のファイルを候補者のファイルと結合するには、まず候補者のファイルをクリーンアップします。</p>
+<ol>
+<li>グリッド ビュー ページの上部で [<strong>FEC-2016</strong>]（データセット セレクタ）をクリックします。</li>
+</ol>
+<p><img alt="dataprep_fec2016.png" src="https://cdn.qwiklabs.com/HjbiWzAPc2RlYFro3r4llT65MBJjJkcA%2FklDCnLHn%2BU%3D"></p>
+<ol start="2">
+<li>
+<p>グレー表示の [<strong>Campaign Contributions</strong>] をクリックして選択します。</p>
+</li>
+<li>
+<p>右のパネルで [<strong>Add New Recipe</strong>] をクリックし、[<strong>Edit Recipe</strong>] をクリックします。</p>
+</li>
+<li>
+<p>ページの右上にある[<strong>recipe</strong>]アイコンをクリックし、[<strong>Add New Step</strong>] をクリックします。</p>
+</li>
+</ol>
+<p><img alt="dataprep_2nd_recipe.png" src="https://cdn.qwiklabs.com/RSjdCHmcco6eqx2PxMao6QLRwsGdN17OuuKWuKScdJA%3D"></p>
+<p>データセット内の余分な区切り文字を削除します。</p>
+<ol>
+<li>
+<p>検索ボックスに次の Wrangle 言語のコマンドを入力します。</p>
+</li>
+</ol>
+<pre><code>replacepatterns col: * with: '' on: `{start}"|"{end}` global: true&#x000A;</code></pre>
+<p>Transformation Builder により Wrangle コマンドが解析され、検索と置換の変換フィールドにデータが入力されます。</p>
+<p><img alt="recipe.png" src="https://cdn.qwiklabs.com/xpmu12D%2F%2Fa4JOxNT8%2FJVhSw4DAZH6m7tdBdNqRKoL4s%3D"></p>
+<ol start="2">
+<li>
+<p>[<strong>Add</strong>] をクリックして、変換をレシピに追加します。</p>
+</li>
+<li>
+<p>新しいステップをもう 1 つレシピに追加します。[<strong>New Step</strong>] をクリックし、検索ボックスに「Join」と入力します。</p>
+</li>
+</ol>
+<p><img alt="Dataprep_join" src="https://cdn.qwiklabs.com/R0Fk6rYEUC7dlUnXULpsr4UXwyI38nKt9koliI%2BmVeo%3D"></p>
+<ol start="4">
+<li>
+<p>[<strong>Join datasets</strong>] をクリックして結合のページを開きます。</p>
+</li>
+<li>
+<p>[Candidate Master 2016-2] をクリックして [Campaign Contributions-2] と結合し、右下の [<strong>Accept</strong>] をクリックします。</p>
+</li>
+</ol>
+<p><img alt="dataprep_candidate_master_2.png" src="https://cdn.qwiklabs.com/s3%2F9d3GqcQR0LKz%2FBa8VVU%2BqM62sZ430%2Fyf7c9lf2EE%3D"></p>
+<ol start="6">
+<li>結合キーのセクションにカーソルを移動し、鉛筆（編集のアイコン）をクリックします。</li>
+</ol>
+<p><img alt="edit_join.png" src="https://cdn.qwiklabs.com/H4yPICUZhn0v03sH8lME2m%2FOnPRm2EK28AYf1CqwWK0%3D"></p>
+<p>Dataprep は共通のキーを推定します。Dataprep が結合キーとして提案する共通の値は多数あります。</p>
+<ol start="7">
+<li>[Add Key] パネルの [Suggested join keys] セクションで、[<strong>column2 = column11</strong>] をクリックします。</li>
+</ol>
+<p><img alt="join_conditions.png" src="https://cdn.qwiklabs.com/PVJawQJsD8zidQznUENkTaUpglQkmkZUoOe8n7dDMmE%3D"></p>
+<ol start="8">
+<li>[<strong>Save and Continue</strong>] をクリックします。</li>
+</ol>
+<p>Column2 と Column11 が確認用に開きます。</p>
+<ol start="9">
+<li>[<strong>Next</strong>] をクリックし、[Columns] ラベルの左側のチェック ボックスをオンにします。これにより、両方のデータセットのすべての列が、結合されるデータセットに追加されます。</li>
+</ol>
+<p><img alt="type_checkbox.png" src="https://cdn.qwiklabs.com/Y0yG7pQbqD9xQ%2FaaawSVMTCspoeJ3GlWrllws8dNzZ0%3D"></p>
+<ol start="10">
+<li>
+<p><strong>Review</strong> をクリックし、<strong>Add to Recipe</strong> をクリックしてグリッドビューに戻ります。</p>
+</li>
+</ol>
+<h2 id="step9">データのサマリー</h2>
+<p>Column 16 の献金を集計、平均化、カウントし、Column 2、24、8 の ID、名前、所属政党別に候補者をグループ化して、有用なサマリーを生成します。</p>
+<ol>
+<li>
+<p>[<strong>New Step</strong>] をクリックし、[<strong>Transformation</strong>] 検索ボックスに次の式を入力して、集計データをプレビューします。</p>
+</li>
+</ol>
+<pre><code>pivot value:sum(column16),average(column16),countif(column16 &gt; 0) group: column2,column24,column8&#x000A;</code></pre>
+<p>結合された集計データの初期サンプルが表示されます。これは、米国大統領候補と 2016 年の選挙献金指標のサマリー テーブルになっています。</p>
+<p></p>
+<p><img alt="6f4fba772aa0a141.png" src="https://cdn.qwiklabs.com/KWn%2BlaBdq7hmCkvWKzDVVGl0JYFKCEXuKEJ2GkfF7uA%3D"></p>
+<ol start="2">
+<li>[<strong>Add</strong>] をクリックして、主な米国大統領候補と、その 2016 年の選挙献金指標のサマリー テーブルを開きます。</li>
+</ol>
+<p><img alt="summary_table.png" src="https://cdn.qwiklabs.com/m0%2FLJXc5GImSno9sE25%2FlYcEx4sM0LfiY%2Bed8raUpnI%3D"></p>
+<h2 id="step10">列名の変更</h2>
+<p>列名を変更すると、データをさらに解析しやすくなります。そのためには、名前の変更と概数にする処理の各ステップをそれぞれレシピに追加します。[<strong>New Step</strong>] をクリックして、次のとおり入力します。</p>
+<pre><code>rename type: manual mapping: [column24,'Candidate_Name'], [column2,'Candidate_ID'],[column8,'Party_Affiliation'], [sum_column16,'Total_Contribution_Sum'], [average_column16,'Average_Contribution_Sum'], [countif,'Number_of_Contributions']&#x000A;</code></pre>
+<p>[<strong>Add</strong>] をクリックします。</p>
+<p>平均献金額を概数にするには、次の行を [<strong>New Step</strong>] の末尾に貼り付けます。</p>
+<pre><code>set col: Average_Contribution_Sum value: round(Average_Contribution_Sum)</code></pre>
+<p>[<strong>Add</strong>] をクリックします。</p>
+<p>結果は次のようになります。</p>
+<p><img alt="2b3dc976f95952a5.png" src="https://cdn.qwiklabs.com/lTAt9SOx1C2HMSt%2B3TZqoAfdPqeDXiD9c2L4rzVPGs0%3D"></p>
