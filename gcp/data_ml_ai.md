@@ -395,3 +395,86 @@
 <p>[<strong>Add</strong>] をクリックします。</p>
 <p>結果は次のようになります。</p>
 <p><img alt="2b3dc976f95952a5.png" src="https://cdn.qwiklabs.com/lTAt9SOx1C2HMSt%2B3TZqoAfdPqeDXiD9c2L4rzVPGs0%3D"></p>
+
+# Dataflow: Qwik Start - テンプレート
+
+<h2 id="step2">概要</h2>
+<p>このラボでは、<a href="https://cloud.google.com/dataflow/docs/templates/provided-templates">Google の Cloud Dataflow テンプレート</a>の 1 つを使用してストリーミング パイプラインを作成する方法を学習します。具体的には、Cloud Pub/Sub to BigQuery テンプレートを使用します。このテンプレートは、Pub/Sub トピックから JSON 形式のメッセージを読み取り、BigQuery テーブルに push します。このテンプレートのドキュメントについては、<a href="https://cloud.google.com/dataflow/docs/templates/provided-templates#cloudpubsubtobigquery">こちら</a>をご覧ください。</p>
+<p>BigQuery でデータセットとテーブルを作成するには、Cloud Shell コマンドラインまたは GCP Console を使用します。<strong>いずれかの方法を選択し</strong>、ラボの作業を進めてください。両方の方法を試したい場合は、このラボを 2 回行ってください。</p>
+
+<h2 id="step4">Cloud Shell を使用して Cloud BigQuery データセットとテーブルを作成する</h2>
+<p>まず BigQuery のデータセットとテーブルを作成します。</p>
+<aside>
+<strong>注: </strong>このセクションでは <code>bq</code> コマンドライン ツールを使用します。Console を使ってこのラボを行う場合は、<strong>スキップ</strong>してください。
+
+</aside>
+<p>次のコマンドを実行して、<code>taxirides</code> というデータセットを作成します。</p>
+<pre><code>bq mk taxirides&#x000A;</code></pre>
+<p>出力は次のようになります。</p>
+<pre><code class="language-bash prettyprint">Dataset '&lt;myprojectid:taxirides&gt;' successfully created&#x000A;</code></pre>
+
+<p>これでデータセットが作成されました。次の手順でこれを使用して、BigQuery テーブルをインスタンス化します。以下のコマンドを実行します。</p>
+<pre><code>bq mk \&#x000A;--time_partitioning_field timestamp \&#x000A;--schema ride_id:string,point_idx:integer,latitude:float,longitude:float,\&#x000A;timestamp:timestamp,meter_reading:float,meter_increment:float,ride_status:string,\&#x000A;passenger_count:integer -t taxirides.realtime&#x000A;</code></pre>
+<p>出力は次のようになります。</p>
+<pre><code class="language-bash prettyprint">Table 'myprojectid:taxirides.realtime' successfully created&#x000A;</code></pre>
+
+<p>一見すると、<code>bq mk</code> コマンドは少し複雑に見えます。しかし、<a href="https://cloud.google.com/bigquery/docs/reference/bq-cli-reference">BigQuery コマンドラインのドキュメントを参照すると</a>、全体像を把握できます。たとえば、<strong>スキーマ</strong>については次のような説明が記載されています。</p>
+<ul>
+<li>「ローカルの JSON スキーマ ファイルへのパス、または <code>[FIELD]</code>:<code>[DATA_TYPE]</code>, <code>[FIELD]</code>:<code>[DATA_TYPE]</code> 形式の列定義のカンマ区切りのリスト」。</li>
+</ul>
+<p>今回は、カンマ区切りのリスト（後者）を使用しています。</p>
+<h3><strong>Storage バケットを作成する</strong></h3>
+<p>テーブルがインスタンス化されたので、バケットを作成します。作成するには、次のコマンドを実行します。</p>
+<pre><code>export BUCKET_NAME=&lt;your-unique-name&gt;&#x000A;</code></pre>
+<pre><code>gsutil mb gs://$BUCKET_NAME/&#x000A;</code></pre>
+
+<p>バケットを作成したら、<strong>「パイプラインを実行する」セクションまで下にスクロール</strong>します。</p>
+<h2 id="step5">GCP Console を使用して Cloud BigQuery データセットとテーブルを作成する</h2>
+<aside> <strong>注: </strong>コマンドラインによる設定が完了している場合は、このセクションの手順を実行しないでください。
+</aside>
+<p>左側のメニューの [ビッグデータ] セクションで [<strong>BigQuery</strong>] をクリックします。</p>
+<p>左側のナビゲーションでプロジェクト名をクリックしてから、コンソールの右側にある [<strong>データセットを作成</strong>] をクリックします。データセット ID として「<code>taxirides</code>」を入力します。</p>
+<p><img alt="dataset.png" src="https://cdn.qwiklabs.com/bRb1qVZ2z54AcpeDuFy%2B85MuvYJY4AVLbyNSjyGBITw%3D"></p>
+<p>その他のデフォルト設定はすべてそのままにし、[<strong>データセットを作成</strong>] をクリックします。</p>
+
+<p>左側のコンソールで、プロジェクト ID の下に taxirides データセットが表示されます。それをクリックして、コンソールの右側にある [<strong>テーブルを作成</strong>] を選択します。</p>
+<p>[<strong>宛先テーブル</strong>] に「<code>realtime</code>」と入力します。</p>
+<p>[スキーマ] で、[<strong>テキストとして編集</strong>] スライダーを切り替えて次のように入力します。</p>
+<pre><code>ride_id:string,point_idx:integer,latitude:float,longitude:float,timestamp:timestamp,&#x000A;meter_reading:float,meter_increment:float,ride_status:string,passenger_count:integer&#x000A;</code></pre>
+
+<p>コンソールは次のようになります。</p>
+<p><img alt="new-table.png" src="https://cdn.qwiklabs.com/gYNzUZhtzX8OAdnoYoNY31oG6lZWz97RxhclS4pX9uM%3D"></p>
+<p>次に、[<strong>テーブルを作成</strong>] をクリックします。</p>
+
+<h3><strong>Storage バケットを作成する</strong></h3>
+<p>GCP Console に戻り、[<strong>Storage</strong>] &gt; [<strong>ブラウザ</strong>] &gt; [<strong>バケットを作成</strong>] に移動します。</p>
+<p><img alt="new-bucket.png" src="https://cdn.qwiklabs.com/kOdGE5oSj2FLlqRFgHSobVa8dbytB9uLsahqTsoSuYY%3D"></p>
+<p>バケットに一意の名前を付けます。その他のデフォルト設定はそのままにして、[<strong>作成</strong>] をクリックします。</p>
+
+<h2 id="step6">パイプラインを実行する</h2>
+<p><strong>ナビゲーション メニュー</strong>の [ビッグデータ] セクションで、[<strong>Dataflow</strong>] をクリックします。</p>
+<p>画面上部の [<strong>+ テンプレートからジョブを作成</strong>] をクリックします。</p>
+<p>Cloud Dataflow ジョブの [<strong>ジョブ名</strong>] を入力します。</p>
+<p>[<strong>Cloud Dataflow テンプレート</strong>] で、[Cloud Pub/Sub Topic to BigQuery]<em></em> テンプレートを選択します。</p>
+<p>[<strong>Cloud Pub/Sub 入力トピック</strong>] に、次のように入力します。</p>
+<pre><code>projects/pubsub-public-data/topics/taxirides-realtime&#x000A;</code></pre>
+<p>[<strong>BigQuery 出力テーブル</strong>] に、作成されたテーブルの名前を入力します。</p>
+<pre><code>&lt;myprojectid&gt;:taxirides.realtime&#x000A;</code></pre>
+<p>バケットを [<strong>一時的なロケーション</strong>] として追加します。</p>
+<pre><code>gs://Your_Bucket_Name/temp&#x000A;</code></pre>
+<p><img alt="console.png" src="https://cdn.qwiklabs.com/kJiAXaVD5HH1IYxC0CWj%2BmR%2B9CqSFNJm3aDa%2Fm%2FEIco%3D"></p>
+<p>[<strong>ジョブを実行</strong>] ボタンをクリックします。</p>
+
+<p>リソースがビルドされ、使用できる状態になります。</p>
+<p>それでは、ナビゲーション メニューにある [<strong>BigQuery</strong>] をクリックして、BigQuery に書き込まれたデータを見てみましょう。</p>
+<p>BigQuery UI が開くと、プロジェクト名の下に <strong>taxirides</strong> テーブル、その下に <strong>realtime</strong> が表示されます。</p>
+<p><img alt="bq-screenshot.png" src="https://cdn.qwiklabs.com/qO%2BbkqpwX5%2Begoc38sfCCc1Q3OmjzMYVg%2B8CQgmEnUA%3D"></p>
+<h2 id="step7">クエリを送信する</h2>
+<p>クエリは、標準 SQL を使用して送信できます。</p>
+<p>[クエリエディタ] フィールドに以下を追加します。<em>myprojectid</em> は、Qwiklabs ページの GCP プロジェクト ID に置き換えます。</p>
+<pre><code>SELECT * FROM `myprojectid.taxirides.realtime` LIMIT 1000&#x000A;</code></pre>
+<p>[<strong>クエリを実行</strong>] をクリックします。</p>
+<p>問題やエラーが発生した場合は、クエリを再実行してください（パイプラインの起動には数分かかります）。</p>
+<p>クエリが正常に実行されると、次のように [クエリ結果] パネルに出力が表示されます。</p>
+<p><img alt="query-results.png" src="https://cdn.qwiklabs.com/JIACp2MGHfBDfVaUOojawE0nqwdx18el4zjgmqABSuc%3D"></p>
+<p>これで Pub/Sub トピックから 1,000 件のタクシー乗車データが pull され、BigQuery テーブルに push されました。実際に確認したように、テンプレートは Dataflow ジョブを実行するのに実用的で使いやすい方法です。<a href="https://cloud.google.com/dataflow/docs/templates/provided-templates">こちら</a>から、他の Google テンプレートを必ず確認するようにしてください。</p>
