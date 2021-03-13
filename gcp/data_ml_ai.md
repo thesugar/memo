@@ -478,3 +478,185 @@
 <p>クエリが正常に実行されると、次のように [クエリ結果] パネルに出力が表示されます。</p>
 <p><img alt="query-results.png" src="https://cdn.qwiklabs.com/JIACp2MGHfBDfVaUOojawE0nqwdx18el4zjgmqABSuc%3D"></p>
 <p>これで Pub/Sub トピックから 1,000 件のタクシー乗車データが pull され、BigQuery テーブルに push されました。実際に確認したように、テンプレートは Dataflow ジョブを実行するのに実用的で使いやすい方法です。<a href="https://cloud.google.com/dataflow/docs/templates/provided-templates">こちら</a>から、他の Google テンプレートを必ず確認するようにしてください。</p>
+
+# Dataproc: Qwik Start - Console
+
+<h2 id="step2">概要</h2>
+<p>Cloud Dataproc は、<a href="http://spark.apache.org/">Apache Spark</a> および <a href="http://hadoop.apache.org/">Apache Hadoop</a> クラスタをより簡単かつ低コストで実行できるようにする、高速で使いやすいフルマネージド クラウド サービスです。このサービスでは、これまで数時間から数日かかっていたオペレーションを数秒から数分で処理できます。Cloud Dataproc クラスタは迅速に作成できるうえ、いつでもサイズ変更が可能です。このため、データ パイプラインの成長にクラスタが追いつかないことを心配する必要はありません。</p>
+
+→　Dataproc はユーザーが大量のデータを処理、変換、理解することに役立つ。
+
+<p>このラボでは、Google Cloud Platform（GCP）Console を使用して Google Cloud Dataproc クラスタを作成し、クラスタで簡単な <a href="http://spark.apache.org/">Apache Spark</a> ジョブを実行してクラスタのワーカーの数を変更する方法を学びます。</p>
+
+<h3><strong>Cloud Dataproc API が有効であること</strong>を確認</h3>
+<p>GCP で Dataproc クラスタを作成するには、Cloud Dataproc API を有効にする必要があります。API が有効になっていることを確認するには:</p>
+<p><strong>ナビゲーション メニュー</strong> &gt; [<strong>API とサービス</strong>] &gt; [<strong>ライブラリ</strong>] をクリックします。</p>
+<p><img alt="nav_to_library.png" src="https://cdn.qwiklabs.com/FLkG9hzTo3TKxjdyHxdzFcp0Ig2LyAbMW%2Blku5xArp8%3D"></p>
+<p>[<strong>API とサービスを検索</strong>] ダイアログに「<strong>Cloud Dataproc</strong>」と入力します。検索結果としてコンソールに Cloud Dataproc API が表示されます。</p>
+<p><strong>Cloud Dataproc API</strong> をクリックすると、API のステータスが表示されます。API がまだ有効になっていない場合は、[<strong>有効にする</strong>] をクリックします。</p>
+<p>API が有効になっている場合は、次の手順に移ります。</p>
+<p><img alt="api.png" src="https://cdn.qwiklabs.com/7Ajj25TBn7XLmDweXY458W77pFyOXYDkFpgceNNo5rk%3D"></p>
+<h2 id="step4">クラスタの作成</h2>
+<p>Cloud Platform Console で<strong>ナビゲーション メニュー</strong> &gt; [<strong>Dataproc</strong>] &gt; [<strong>クラスタ</strong>] を選択し、[<strong>クラスタの作成</strong>] をクリックします。</p>
+<p>クラスタの各項目を以下のように設定します。これ以外の項目はすべてデフォルト値のままにします。</p>
+<table>
+
+<tr>
+<th>項目</th>
+<th>値</th>
+</tr>
+
+
+<tr>
+<td>名前</td>
+<td>example-cluster</td>
+</tr>
+<tr>
+<td>リージョン</td>
+<td>global</td>
+</tr>
+<tr>
+<td>ゾーン</td>
+<td>us-central1-a</td>
+</tr>
+
+</table>
+<aside>
+<strong>注:</strong> <em>ゾーン</em>は特別なマルチリージョンの名前空間であり、すべての Google Compute ゾーンに対してグローバルにインスタンスをデプロイできます。また、個別のリージョン（<code>us-east1</code> や <code>europe-west1</code> など）を複数指定することで、Cloud Dataproc によって利用されるリソース（VM インスタンスや Google Cloud Storage など）やメタデータの保存場所をリージョンごとに分離することもできます。
+
+</aside>
+<p><img alt="ccc5b8f862ec3a4f.png" src="https://cdn.qwiklabs.com/nj3Y5D%2BthYWN%2Bw%2BulCuLwrS%2BWAs5faDSDR%2BKLN5NuUo%3D"></p>
+<p>[<strong>作成</strong>] をクリックしてクラスタを作成します。</p>
+<p>新しいクラスタが [クラスタ] リストに表示されます。作成には数分かかる場合があります。クラスタが使用できるようになるまで、ステータスには [<strong>プロビジョニング</strong>] と表示され、その後 [<strong>実行中</strong>] に変わります。</p>
+
+## コマンドラインでクラスタを作成する場合
+
+```bash
+gcloud config set dataproc/region global
+```
+
+```bash
+gcloud dataproc clusters create example-cluster
+```
+
+<h2 id="step5">ジョブの送信</h2>
+<p>サンプルの Spark ジョブを実行するには:</p>
+<p>左側のナビゲーション メニューで [<strong>ジョブ</strong>] を選択して Dataproc ジョブの表示に切り替え、[<strong>ジョブの送信</strong>] をクリックします。</p>
+<p><img alt="fe78cb5282f3f914.png" src="https://cdn.qwiklabs.com/10Y1a%2B4f6tEAFIqZuxfwNze2jCayn7ZW%2FZqPMn2sDms%3D"></p>
+<p>ジョブを更新するために以下の項目を設定します。これ以外の項目はすべてデフォルト値のままにします。</p>
+<table>
+
+<tr>
+<th>項目</th>
+<th>値</th>
+</tr>
+
+
+<tr>
+<td>クラスタ</td>
+<td>example-cluster</td>
+</tr>
+<tr>
+<td>ジョブタイプ</td>
+<td>Spark</td>
+</tr>
+<tr>
+<td>メインクラスまたは JAR</td>
+<td>org.apache.spark.examples.SparkPi</td>
+</tr>
+<tr>
+<td>引数</td>
+<td>1000（タスクの数を設定します）</td>
+</tr>
+<tr>
+<td>JAR ファイル</td>
+<td>file:///usr/lib/spark/examples/jars/spark-examples.jar</td>
+</tr>
+
+</table>
+<p><img alt="66a806709011b870.png" src="https://cdn.qwiklabs.com/UOaUkpetQkKD%2BLM8Rw6KvLmmxLtD5zJNkHu6Jj%2BCgfk%3D"></p>
+<p>[<strong>送信</strong>] をクリックします。</p>
+<aside class="special"><p><strong>ジョブによる Pi の計算方法:</strong> Spark ジョブは、<a href="https://en.wikipedia.org/wiki/Monte_Carlo_method" target="_blank">モンテカルロ法</a>を使用して Pi の値を推定します。これによって、単位正方形で囲まれた円をモデル化した座標平面上に x、y 点が生成されます。入力引数（1000）は、生成する x と y のペア数を決定します。生成するペアが多いほど、推定の精度が向上します。この推定では、Cloud Dataproc ワーカーノードを利用して計算が並列化されます。詳細については、<a href="https://academo.org/demos/estimating-pi-monte-carlo/" target="_blank">モンテカルロ法を使用した Pi の推定</a>と、<a href="https://github.com/apache/spark/blob/master/examples/src/main/java/org/apache/spark/examples/JavaSparkPi.java" target="_blank">GitHub の JavaSparkPi.java</a> をご覧ください。</p>
+</aside>
+<p>ジョブが [<strong>ジョブ</strong>] リストに表示されます。このリストには、プロジェクトのジョブがクラスタ、タイプ、現在のステータスとともに表示されます。ジョブ ステータスは [<strong>実行中</strong>] と表示され、その後ジョブが完了すると [<strong>完了</strong>] になります。</p>
+<p><img alt="9985555bb3c1543.png" src="https://cdn.qwiklabs.com/T5Qtm5IbKDxZAAOGCu2acHOg1d%2Bkn%2FcLg%2FE6T7DAnbY%3D"></p>
+
+## コマンドラインでジョブを送信する場合
+
+```bash
+gcloud dataproc jobs submit spark --cluster example-cluster \
+  --class org.apache.spark.examples.SparkPi \
+  --jars file:///usr/lib/spark/examples/jars/spark-examples.jar -- 1000
+```
+
+このコマンドでは、以下が指定されています。
+
+- Spark ジョブを example-cluster クラスタで実行すること
+- ジョブの Pi 計算アプリケーションの main メソッドが含まれる class
+- ジョブのコードが含まれる jar ファイルの場所
+- ジョブに渡すパラメータ。このケースでは、タスクの個数（1000）
+
+<h2 id="step6">ジョブ出力の確認</h2>
+<p>完了したジョブの出力を表示する手順は次のとおりです。</p>
+<p>[<strong>ジョブ</strong>] リストのジョブ ID をクリックします。</p>
+<p>[<strong>行の折り返し</strong>] をオンにするか、Pi の計算値まで右にスクロールします。[<strong>行の折り返し</strong>] をオンにすると、次のように表示されます。</p>
+<p><img alt="output.png" src="https://cdn.qwiklabs.com/zoDB6bN%2FfzWp9P7ltO26xgW%2FanpJ2LScnaHtbttd0tU%3D"></p>
+<p>Pi のおおよその値が正しく計算されました。</p>
+<h3>クラスタの更新</h3>
+<p>クラスタのワーカー インスタンスの数を変更するには:</p>
+<ol>
+<li>左側のナビゲーション ペインで [<strong>クラスタ</strong>] を選択し、Dataproc クラスタの表示に戻ります。</li>
+<li>[<strong>クラスタ</strong>] リストで [<strong>example-cluster</strong>] をクリックします。デフォルトでは、クラスタの CPU 使用率の概要が表示されます。</li>
+<li>[<strong>設定</strong>] をクリックし、クラスタの現在の設定を表示します。</li>
+</ol>
+<p><img alt="ec14bf04e8f43d88.png" src="https://cdn.qwiklabs.com/Fvipbc9ytyszFNKtzc3tLtVHdWy1Ya3kOzmvLA1lMWs%3D"></p>
+<ol start="4">
+<li>[<strong>編集</strong>] をクリックします。ここでワーカーノードの数を編集できます。</li>
+<li>[<strong>ワーカーノード</strong>] に、「<strong>4</strong>」と入力します。</li>
+<li>[<strong>保存</strong>] をクリックします。</li>
+</ol>
+<p><img alt="944887f76f36e447.png" src="https://cdn.qwiklabs.com/HbuwmChVD%2FKHAFx7XyZK1KCkCyDkpytcSjcQjVszFM4%3D"></p>
+<p>クラスタが更新されました。クラスタの VM インスタンスの数を確認してください。</p>
+<p><img alt="vm-instances.png" src="https://cdn.qwiklabs.com/odOIZ7betFCnE4NmF5XfYPog0%2FkAbeHeAZbOjifAcSA%3D"></p>
+
+<p>更新されたクラスタのジョブを再度実行するには、左側のナビゲーション メニューで [<strong>ジョブ</strong>] をクリックしてから [<strong>ジョブの送信</strong>] をクリックします。</p>
+<p>[<strong>ジョブの送信</strong>] で設定した項目と同じ項目を設定します。</p>
+<table>
+
+<tr>
+<th>項目</th>
+<th>値</th>
+</tr>
+
+
+<tr>
+<td>クラスタ</td>
+<td>example-cluster</td>
+</tr>
+<tr>
+<td>ジョブタイプ</td>
+<td>Spark</td>
+</tr>
+<tr>
+<td>メインクラスまたは JAR</td>
+<td>org.apache.spark.examples.SparkPi</td>
+</tr>
+<tr>
+<td>引数</td>
+<td>1000（タスクの数を設定します）</td>
+</tr>
+<tr>
+<td>JAR ファイル</td>
+<td>file:///usr/lib/spark/examples/jars/spark-examples.jar
+</td>
+</tr>
+
+</table>
+<p><img alt="66a806709011b870.png" src="https://cdn.qwiklabs.com/UOaUkpetQkKD%2BLM8Rw6KvLmmxLtD5zJNkHu6Jj%2BCgfk%3D"></p>
+<p>[<strong>送信</strong>] をクリックします。</p>
+
+## コマンドラインでクラスタを更新する場合
+
+```bash
+gcloud dataproc clusters update example-cluster --num-workers 4
+```
