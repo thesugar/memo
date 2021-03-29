@@ -660,3 +660,45 @@ gcloud dataproc jobs submit spark --cluster example-cluster \
 ```bash
 gcloud dataproc clusters update example-cluster --num-workers 4
 ```
+
+# 強化学習: Qwik Start
+<h2 id="step2">概要</h2>
+<h3>はじめに</h3>
+<p>機械学習に関する研究の多くの分野と同様に、<a href="https://ja.wikipedia.org/wiki/%E5%BC%B7%E5%8C%96%E5%AD%A6%E7%BF%92">強化学習（RL: Reinforcement Learning）</a>は、猛烈なスピードで進歩しています。他の研究分野もそうですが、研究者たちはディープ ラーニングを活用して最先端の成果を生み出しています。</p>
+<p>特に強化学習は、ゲーム分野で従来の機械学習テクニックの性能を大幅に上回り、Atari ゲームでは人間のレベルに追いつくどころか、世界最高水準にまで達しました。囲碁では人間のチャンピオンに勝ち、Starcraft II のような難易度の高いゲームでも今後が期待される結果を出しています。</p>
+<p>このラボでは、<a href="https://gym.openai.com/">OpenAI Gym</a> が提供するサンプルからモデル化された、簡単なゲームを構築することによって強化学習の基礎を学びます。</p>
+<h3>目標</h3>
+<p>このラボでは、次の作業を行います。</p>
+<ul>
+<li>強化学習の基本的なコンセプトについて理解する。</li>
+<li>AI Platform Tensorflow 2.1 Notebook を作成する。</li>
+<li>GitHub にある training data analyst リポジトリからサンプル リポジトリのクローンを作成する。</li>
+<li>ノートブックの手順を読み、理解し、実行する。</li>
+</ul>
+
+<h2 id="step4">強化学習 101</h2>
+<p>強化学習は機械学習の形態の 1 つであり、エージェントが環境に対する行動を選択しながら、その一連の選択を通じて得られる目標（報酬）を最大化する方法を学習していくというものです。従来の教師あり学習のテクニックとは異なり、データポイントはすべてがラベル付けされるというわけではなく、エージェントは「疎」な報酬にアクセスできるだけです。</p>
+<p><a href="http://www.incompleteideas.net/book/ebook/node12.html">強化学習の歴史</a>は 1950 年代にまでさかのぼることができます。そのアルゴリズムは数多く存在しますが、最近では、簡単に実装できる強力な深層強化学習アルゴリズム、DQN（Deep Q-Network）と DDPG（Deep Deterministic Policy Gradient）の 2 つが注目されています。このセクションでは、アルゴリズムとその変種について簡単に紹介します。</p>
+<p><img alt="8c84b4dbb56d882e.png" src="https://cdn.qwiklabs.com/cDBDy0wLYFlwkAnG0PrdbCg7UAEngRYH%2BORdWseL14A%3D"></p>
+<p>強化学習のプロセス概念図<em></em></p>
+<p>DQN は、Google DeepMind グループが 2015 年に <a href="https://storage.googleapis.com/deepmind-media/dqn/DQNNaturePaper.pdf">Nature の論文</a>で発表したアルゴリズムです。論文の著者らは、画像認識分野でのディープ ラーニングの成功を励みに、ディープ ニューラル ネットワークを Q 学習に組み込み、観測空間が非常に高次元な <a href="https://gym.openai.com/envs/#atari">Atari Game Engine Simulator</a> でアルゴリズムをテストしました。</p>
+<p>ディープ ニューラル ネットワークは、特定の入力状態に基づいて、出力 Q 値、すなわちある行動を取ることがどの程度望ましいかを予測する関数近似器として機能します。つまり、DQN は価値ベースのアルゴリズムです。DQN はトレーニング アルゴリズムの中でベルマン方程式に従い Q 値を更新していきますが、動くターゲットに合わせる難しさを避けるために、ターゲットの値を予測する、第 2 のディープ ニューラル ネットワークを使います。</p>
+<p>より実用的なレベルとして、次のモデルでは、GCP で実行されている強化学習ジョブを取得するために、ソースファイル、シェルコマンド、エンドポイントを強調表示しています。</p>
+<p><img alt="62687b03fa144178.png" src="https://cdn.qwiklabs.com/FQvwxiTxO%2FJ5baJVEDsj0tKHG1hvn27YHmaa0FHFbS4%3D"></p>
+<h2 id="step5">AI Platform Notebook を作成する</h2>
+<p>このラボに必要なすべてのファイルは、この<a href="https://github.com/GoogleCloudPlatform/training-data-analyst/pull/745">リポジトリ</a>にあります。これらすべてのコマンドを実行するために、AI Platform Tensorflow Notebook を作成します。</p>
+<p>左側のナビゲーション メニューで、[<strong>AI Platform</strong>] &gt; [<strong>ノートブック</strong>] の順に選択します。上部のメニューで、[<strong>+ 新しいインスタンス</strong>] &gt; [<strong>Tensorflow 2.1</strong>] &gt; [<strong>Without GPUs</strong>] の順に選択します。</p>
+<p><img alt="5b41852a0a7cc19b.png" src="https://cdn.qwiklabs.com/SMSqSEVSsQ9PrCIKKpdb1bZ30cqeytJeh4gj5KWoCGY%3D"></p>
+<p>次に [<strong>作成</strong>] をクリックします。数分で AI Platform Notebook のプロビジョニングが完了します。ページを適宜更新してください。ノートブックがビルドされたら、[<strong>JupyterLab を開く</strong>] ボタンをクリックします。</p>
+<p><img alt="5fd20811e4ca5ec7.png" src="https://cdn.qwiklabs.com/1gDxdk8TVF0S0RL9VA8isFHv7DODEipQ0Of6b%2FPuaX0%3D"></p>
+<p>JupyterLab が読み込まれた新しいタブが開きます。</p>
+
+<h2 id="step6">サンプルコードのクローンを作成する</h2>
+<p>[<strong>ターミナル</strong>] アイコンをクリックします。コマンドを入力するための一時的なシェルが用意されます。次のコマンドを入力して、training data analyst リポジトリからサンプル レポジトリのクローンを作成します。</p>
+<pre><code>git clone https://github.com/GoogleCloudPlatform/training-data-analyst.git&#x000A;</code></pre>
+<p>このコマンドが反映されるまで待ちます。左側のメニューで、[<strong>training-data-analyst</strong>] &gt; [<strong>quests</strong>] &gt; [<strong>rl</strong>] &gt; [<strong>early_rl</strong>] &gt; [<strong>early_rl.ipynb</strong>] の順に選択します。新しいタブが開きます。</p>
+
+<h2 id="step7">ノートブックを実行する</h2>
+<p>新しいタブは次のようになります。</p>
+<p><img alt="6827f6f1a1eae75.png" src="https://cdn.qwiklabs.com/eIiugfg275%2BwduGfjCmVnCwb%2B6FnsIZDN4I16yT0wCY%3D"></p>
+<p>次のノートブックを読み、<strong>Shift + Enter</strong> を押して、すべてのコードブロックを実行します。</p>
