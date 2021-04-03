@@ -702,3 +702,350 @@ gcloud dataproc clusters update example-cluster --num-workers 4
 <p>新しいタブは次のようになります。</p>
 <p><img alt="6827f6f1a1eae75.png" src="https://cdn.qwiklabs.com/eIiugfg275%2BwduGfjCmVnCwb%2B6FnsIZDN4I16yT0wCY%3D"></p>
 <p>次のノートブックを読み、<strong>Shift + Enter</strong> を押して、すべてのコードブロックを実行します。</p>
+
+# Cloud Composer （Airflow）: Qwik Start - Console
+
+<h2 id="step2">概要</h2>
+<p>ワークフローはデータ分析における一般的なテーマのひとつで、データの取り込み、変換、分析によってデータから有益な情報を見つけるために使用されます。Google Cloud Platform（GCP）には、ワークフローをホストするためのツールとして Cloud Composer が用意されています。これは、よく利用されているオープンソース ワークフロー ツールの Apache Airflow をホスト型にしたものです。</p>
+<p>このラボでは、GCP Console を使用して Cloud Composer 環境を作成し、Cloud Composer を使ってシンプルなワークフローを実行します。このワークフローは、データファイルが存在することを確認し、Cloud Dataproc クラスタを作成して Apache Hadoop ワードカウント ジョブを実行した後、Cloud Dataproc クラスタを削除します。</p>
+<h3>演習内容</h3>
+<ul>
+<li>
+<p>GCP Console を使用して Cloud Composer 環境を作成する</p>
+</li>
+<li>
+<p>Airflow ウェブ インターフェースで DAG（有向非巡回グラフ）を表示して実行する</p>
+</li>
+<li>
+<p>保存されたワードカウント ジョブの結果を表示する</p>
+</li>
+</ul>
+
+<h2 id="step4">Cloud Composer 環境を作成する</h2>
+<p>このセクションでは、Cloud Composer 環境を作成します。</p>
+<ol>
+<li>
+<strong>ナビゲーション メニュー</strong> &gt; [<strong>Composer</strong>] に移動します。</li>
+</ol>
+<p><img alt="6d5cc1e126272384.png" src="https://cdn.qwiklabs.com/xM%2Bvs%2B5wRKY0WR6BrAN8XQ2nvFiHEgLN7kltTL9BzZI%3D"></p>
+<ol start="2">
+<li>[<strong>環境の作成</strong>] をクリックし、次の環境設定を指定します。</li>
+</ol>
+<p><strong>名前:</strong> highcpu</p>
+<p><strong>場所:</strong> us-central1</p>
+<p><strong>ゾーン:</strong> us-central1-a</p>
+<p><strong>マシンタイプ:</strong> n1-highcpu-4</p>
+<p><strong>Python バージョン:</strong> 3</p>
+<p>その他の設定はすべてデフォルトのままにします。</p>
+<ol start="3">
+<li>[<strong>作成</strong>] をクリックします。</li>
+</ol>
+<p>GCP コンソールの [環境] ページで環境の名前の左側に緑色のチェックマークが表示されれば、環境作成プロセスは完了しています。</p>
+<p>設定プロセスが完了するまで 10～15 分かかることがあります。その間にラボの作業を進めてください。</p>
+<h3>Cloud Storage バケットを作成する</h3>
+<p>プロジェクトの Cloud Storage バケットを作成します。このバケットは、Dataproc の Hadoop ジョブの出力に使用されます。</p>
+<ol>
+<li>
+<p><strong>ナビゲーション メニュー</strong> &gt; [<strong>Storage</strong>] &gt; [<strong>ブラウザ</strong>] に移動して [<strong>バケットを作成</strong>] をクリックします。</p>
+</li>
+<li>
+<p>バケットにユニバーサルに一意な名前を付けてから、[<strong>作成</strong>] をクリックします。</p>
+</li>
+</ol>
+<p>この Cloud Storage バケット名は後ほど Airflow 変数として使用するため、覚えておいてください。</p>
+<p>[<strong>進行状況を確認</strong>] をクリックして、目標に沿って進んでいることを確認します。</p>
+
+<h2 id="step5">Airflow と主要なコンセプト</h2>
+<p>Composer 環境が作成されるまでの間に、Airflow で使用される用語を確認しましょう。</p>
+<p><a href="https://airflow.apache.org/">Airflow</a> とは、ワークフローの作成、スケジューリング、モニタリングをプログラマティックに行うためのプラットフォームです。</p>
+<p>Airflow を使用して、ワークフローをタスクの有向非循環グラフ（DAG）として作成します。Airflow スケジューラは、指定された依存関係に従って一連のワーカーでタスクを実行します。</p>
+<h3>基本コンセプト</h3>
+<p><a href="https://airflow.apache.org/concepts.html#dags">DAG</a></p>
+<p>有向非循環グラフ（DAG）とは、実行したいすべてのタスクの集まりであり、それらの関係や依存状態を反映するように編成されます。</p>
+<p><a href="https://airflow.apache.org/concepts.html#operators">オペレーター</a></p>
+<p>単一のタスクを記述したもので、通常はアトミックなタスクです。たとえば、BashOperator<em></em> は bash コマンドの実行に使用されます。</p>
+<p><a href="https://airflow.apache.org/concepts.html#tasks">タスク</a></p>
+<p>オペレーターのパラメータ化されたインスタンスであり、DAG 内のノードです。</p>
+<p><a href="https://airflow.apache.org/concepts.html#task-instances">タスク インスタンス</a></p>
+<p>特定のタスクの実行です。DAG、タスク、ある時点を表し、実行中<em></em>、成功<em></em>、失敗<em></em>、スキップ<em></em>などのステータスを示します。</p>
+<p>その他のコンセプトについては、<a href="https://airflow.apache.org/concepts.html#">こちら</a>をご覧ください。</p>
+<h2 id="step6">ワークフローの定義</h2>
+<p>これから使用するワークフローについて説明します。Cloud Composer ワークフローは <a href="https://airflow.incubator.apache.org/concepts.html#dags">DAG（Directed Acyclic Graph、有向非循環グラフ）</a>で構成されます。DAG の定義には標準 Python ファイルを使用し、これらのファイルは Airflow の <code>DAG_FOLDER</code> に配置されます。Airflow では各ファイル内のコードを実行して動的に <code>DAG</code> オブジェクトをビルドします。任意の数のタスクを記述した DAG を必要なだけ作成できます。一般に、DAG と論理ワークフローは 1 対 1 で対応している必要があります。</p>
+<p>次のコードは <a href="https://github.com/GoogleCloudPlatform/python-docs-samples/blob/master/composer/workflows/hadoop_tutorial.py" target="_blank">hadoop_tutorial.py</a> ワークフロー（DAG）です。</p>
+
+```python
+# Copyright 2018 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# [START composer_hadoop_tutorial]
+"""Example Airflow DAG that creates a Cloud Dataproc cluster, runs the Hadoop
+wordcount example, and deletes the cluster.
+
+This DAG relies on three Airflow variables
+https://airflow.apache.org/concepts.html#variables
+* gcp_project - Google Cloud Project to use for the Cloud Dataproc cluster.
+* gce_zone - Google Compute Engine zone where Cloud Dataproc cluster should be
+  created.
+* gcs_bucket - Google Cloud Storage bucket to use for result of Hadoop job.
+  See https://cloud.google.com/storage/docs/creating-buckets for creating a
+  bucket.
+"""
+
+import datetime
+import os
+
+from airflow import models
+from airflow.contrib.operators import dataproc_operator
+from airflow.utils import trigger_rule
+
+# Output file for Cloud Dataproc job.
+output_file = os.path.join(
+    models.Variable.get('gcs_bucket'), 'wordcount',
+    datetime.datetime.now().strftime('%Y%m%d-%H%M%S')) + os.sep
+# Path to Hadoop wordcount example available on every Dataproc cluster.
+WORDCOUNT_JAR = (
+    'file:///usr/lib/hadoop-mapreduce/hadoop-mapreduce-examples.jar'
+)
+# Arguments to pass to Cloud Dataproc job.
+input_file = 'gs://pub/shakespeare/rose.txt'
+wordcount_args = ['wordcount', input_file, output_file]
+
+yesterday = datetime.datetime.combine(
+    datetime.datetime.today() - datetime.timedelta(1),
+    datetime.datetime.min.time())
+
+default_dag_args = {
+    # Setting start date as yesterday starts the DAG immediately when it is
+    # detected in the Cloud Storage bucket.
+    'start_date': yesterday,
+    # To email on failure or retry set 'email' arg to your email and enable
+    # emailing here.
+    'email_on_failure': False,
+    'email_on_retry': False,
+    # If a task fails, retry it once after waiting at least 5 minutes
+    'retries': 1,
+    'retry_delay': datetime.timedelta(minutes=5),
+    'project_id': models.Variable.get('gcp_project')
+}
+
+# [START composer_hadoop_schedule]
+with models.DAG(
+        'composer_hadoop_tutorial',
+        # Continue to run DAG once per day
+        schedule_interval=datetime.timedelta(days=1),
+        default_args=default_dag_args) as dag:
+    # [END composer_hadoop_schedule]
+
+    # Create a Cloud Dataproc cluster.
+    create_dataproc_cluster = dataproc_operator.DataprocClusterCreateOperator(
+        task_id='create_dataproc_cluster',
+        # Give the cluster a unique name by appending the date scheduled.
+        # See https://airflow.apache.org/code.html#default-variables
+        cluster_name='composer-hadoop-tutorial-cluster-{{ ds_nodash }}',
+        num_workers=2,
+        zone=models.Variable.get('gce_zone'),
+        master_machine_type='n1-standard-1',
+        worker_machine_type='n1-standard-1')
+
+    # Run the Hadoop wordcount example installed on the Cloud Dataproc cluster
+    # master node.
+    run_dataproc_hadoop = dataproc_operator.DataProcHadoopOperator(
+        task_id='run_dataproc_hadoop',
+        main_jar=WORDCOUNT_JAR,
+        cluster_name='composer-hadoop-tutorial-cluster-{{ ds_nodash }}',
+        arguments=wordcount_args)
+
+    # Delete Cloud Dataproc cluster.
+    delete_dataproc_cluster = dataproc_operator.DataprocClusterDeleteOperator(
+        task_id='delete_dataproc_cluster',
+        cluster_name='composer-hadoop-tutorial-cluster-{{ ds_nodash }}',
+        # Setting trigger_rule to ALL_DONE causes the cluster to be deleted
+        # even if the Dataproc job fails.
+        trigger_rule=trigger_rule.TriggerRule.ALL_DONE)
+
+    # [START composer_hadoop_steps]
+    # Define DAG dependencies.
+    create_dataproc_cluster >> run_dataproc_hadoop >> delete_dataproc_cluster
+    # [END composer_hadoop_steps]
+
+# [END composer_hadoop]
+```
+
+<p>この DAG では、3 つのワークフロー タスクをオーケストレートするために次のオペレーターをインポートしています。</p>
+<ol>
+<li>
+<code>DataprocClusterCreateOperator</code>: Cloud Dataproc クラスタを作成します。</li>
+<li>
+<code>DataProcHadoopOperator</code>: Hadoop ワードカウント ジョブを送信し、結果を Cloud Storage バケットに書き込みます。</li>
+<li>
+<code>DataprocClusterDeleteOperator</code>: クラスタを削除して、Compute Engine の利用料金が発生しないようにします。</li>
+</ol>
+<p>タスクは順番に実行されます。ファイルの次の部分で確認できます。</p>
+<pre><code># DAG の依存関係を定義します&#x000A;create_dataproc_cluster &gt;&gt; run_dataproc_hadoop &gt;&gt; delete_dataproc_cluster&#x000A;</code></pre>
+<p>この DAG の名前は <code>hadoop_tutorial</code> で、1 日 1 回実行されます。</p>
+<pre><code>with models.DAG(&#x000A;        'composer_hadoop_tutorial',&#x000A;        # DAG を 1 日に 1 回、継続して実行します&#x000A;        schedule_interval=datetime.timedelta(days=1),&#x000A;        default_args=default_dag_args) as dag:&#x000A;</code></pre>
+<p><code>default_dag_args</code> に渡される <code>start_date</code> は <code>yesterday</code> に設定されているので、Cloud Composer ではワークフローの開始が DAG のアップロード直後に設定されます。</p>
+<h2 id="step7">環境情報の表示</h2>
+<ol>
+<li>
+<p><strong>Composer</strong> に戻り、環境のステータスを確認します。</p>
+</li>
+<li>
+<p>環境が作成されたら、環境の名前（highcpu）をクリックして詳細を確認します。</p>
+</li>
+</ol>
+<p>[<strong>環境の詳細</strong>] で、Airflow ウェブ インターフェース URL、Kubernetes Engine クラスタ ID、バケットに保存されている DAG フォルダへのリンクなどの情報を確認できます。</p>
+<aside class="special"><p><strong>注:</strong> Cloud Composer がスケジュール設定を行うのは、<code>/dags</code> フォルダ内のワークフローのみです。</p>
+</aside>
+<p>[<strong>進行状況を確認</strong>] をクリックして、目標に沿って進んでいることを確認します。</p>
+
+<h2 id="step8">Airflow UI の使用</h2>
+<p>GCP Console で Airflow ウェブ インターフェースにアクセスするには:</p>
+<ol>
+<li>
+<p>[<strong>環境</strong>] ページに戻ります。</p>
+</li>
+<li>
+<p>環境の [<strong>Airflow ウェブサーバー</strong>] 列で、[<strong>Airflow</strong>] をクリックします。</p>
+</li>
+<li>
+<p>ラボの認証情報をクリックします。</p>
+</li>
+<li>
+<p>新しいウィンドウに Airflow ウェブ インターフェースが表示されます。</p>
+</li>
+</ol>
+<h2 id="step9">Airflow 変数の設定</h2>
+<p>Airflow 変数は Airflow 固有の概念であり、<a href="https://cloud.google.com/composer/docs/how-to/managing/environment-variables">環境変数</a>とは異なります。</p>
+<ol>
+<li>Airflow メニューバーで [<strong>Admin</strong>] &gt; [<strong>Variables</strong>] を選択し、[<strong>Create</strong>] をクリックします。</li>
+</ol>
+<p><img alt="4a38ba78af97a898.png" src="https://cdn.qwiklabs.com/O8uLOjzf0%2BIexBYTTlXK1SeU%2BX2yEiX02jjOzwRSx9s%3D"></p>
+<ol start="2">
+<li>
+<code>gcp_project</code>、<code>gcs_bucket</code>、<code>gce_zone</code> の 3 つの Airflow 変数を作成します。</li>
+</ol>
+<table>
+<tr>
+<td colspan="1" rowspan="1">
+<p><strong>キー</strong></p>
+</td>
+<td colspan="1" rowspan="1">
+<p><strong>値</strong></p>
+</td>
+<td colspan="1" rowspan="1">
+<p><strong>詳細</strong></p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p><code>gcp_project</code></p>
+</td>
+<td colspan="1" rowspan="1">
+<p>プロジェクト ID</p>
+</td>
+<td colspan="1" rowspan="1">
+<p>この Qwik Start で使用している Google Cloud Platform プロジェクト。</p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p><code>gcs_bucket</code></p>
+</td>
+<td colspan="1" rowspan="1">
+<p>gs://</p>
+</td>
+<td colspan="1" rowspan="1">
+<p> は、先ほど作成した Cloud Storage バケットの名前に置き換えます。このバケットに Dataproc の Hadoop ジョブの出力が保存されます。</p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p><code>gce_zone</code></p>
+</td>
+<td colspan="1" rowspan="1">
+<p>us-central1-a</p>
+</td>
+<td colspan="1" rowspan="1">
+<p>Cloud Dataproc クラスタを作成する Compute Engine ゾーン。別のゾーンを選択するには、<a href="https://cloud.google.com/compute/docs/regions-zones/regions-zones#available" target="_blank">使用可能なリージョンとゾーン</a>をご覧ください。</p>
+</td>
+</tr>
+</table>
+<p>完了すると、Variables のテーブルは次のようになります。</p>
+<p><img alt="6069c7a4f191b5a3.png" src="https://cdn.qwiklabs.com/1YBb%2F%2F98z%2Fc1FLI6JFa0AHmt1UC3ngg8cpXSZazsR%2F0%3D"></p>
+<h2 id="step10">DAG の Cloud Storage へのアップロード</h2>
+<p>DAG をアップロードするには:</p>
+<ol>
+<li>
+<p>Cloud Shell で、hadoop_tutorial.py をコピーしてローカル仮想マシンに保存します。</p>
+</li>
+</ol>
+<pre><code>git clone https://github.com/GoogleCloudPlatform/python-docs-samples&#x000A;</code></pre>
+<ol start="2">
+<li>
+<p><code>python-docs-samples</code> ディレクトリに移動します。</p>
+</li>
+</ol>
+<pre><code class="language-bash prettyprint">cd python-docs-samples/composer/workflows&#x000A;</code></pre>
+<ol start="3">
+<li>
+<p>次に <code>hadoop_tutorial.py</code> ファイルのコピーを Cloud Storage バケットにアップロードします。このバケットは、環境を作成したときに自動的に作成されています。これを確認するには、[<strong>Composer</strong>] &gt; [<strong>環境</strong>] に移動して、先ほど作成した環境をクリックします。作成した環境の説明が表示されます。[<code>DAG のフォルダ</code>] を見つけて値をコピーし、次のコマンドの <code>DAGs_folder_path</code> をその値に置き換えて、ファイルをアップロードします。</p>
+</li>
+</ol>
+<pre><code>gsutil cp hadoop_tutorial.py DAGs_folder_path&#x000A;</code></pre>
+<p>Cloud Composer により、DAG が Airflow に追加されて自動的にスケジュール設定されます。DAG の変更が 3～5 分で行われます。これ以降、このワークフローを <code>composer_hadoop_tutorial</code> と呼びます。</p>
+<p>このタスクのステータスは、Airflow ウェブ インターフェースで確認できます。</p>
+
+<h3>DAG の実行状況の確認</h3>
+<p>DAG ファイルを Cloud Storage の <code>dags</code> フォルダにアップロードすると、ファイルが Cloud Composer によって解析されます。エラーが見つからなければ、このワークフローの名前が DAG のリストに表示され、即時実行されるようキューに登録されます。</p>
+<p>Airflow ウェブ インターフェースの [DAGs] タブが表示されていることを確認してください。このプロセスが完了するまで数分かかります。ブラウザの画面を更新して、最新情報を表示してください。</p>
+<p><img alt="802e34f53ff823f7.png" src="https://cdn.qwiklabs.com/gEFZWSXpeYO%2Fu8otUagVB%2Bg9DVzkN1eF2sepg9DErEk%3D"></p>
+<ol>
+<li>Airflow で [<strong>composer_hadoop_tutorial</strong>] をクリックして DAG の詳細ページを開きます。このページでは、ワークフローのタスクと依存関係が図で示されています。</li>
+</ol>
+<p><img alt="36269bfc2aa177b0.png" src="https://cdn.qwiklabs.com/8XEkWjYsF%2FyLN9OwhnUw617grlu1YYfEneShhCsUsZY%3D"></p>
+<ol start="2">
+<li>ツールバーの [<strong>Graph View</strong>] をクリックします。各タスクのグラフィックにカーソルを合わせると、そのタスクのステータスが表示されます。各タスクを囲む線の色もステータスを表しています（緑は実行中、赤は失敗など）。</li>
+</ol>
+<p><img alt="7ff3ff1262891e06.png" src="https://cdn.qwiklabs.com/6oFp1AbGNvE2AGYELR14lma8fICFtNk2MqghT89PBxQ%3D"></p>
+<ol start="3">
+<li>[Refresh] をクリックして最新情報を表示すると、プロセスを囲む線の色がステータスに応じて変化するのを確認できます。</li>
+</ol>
+<p>プロセスのステータスが「Success」（成功）になったら、もう一度ワークフローを [<strong>Graph View</strong>] から実行します。</p>
+<ol>
+<li>[<strong>create_dataproc_cluster</strong>] グラフィックをクリックします。</li>
+<li>[<strong>Clear</strong>] をクリックして 3 つのタスクをリセットします。
+<img alt="afc5474e843a0a8c.png" src="https://cdn.qwiklabs.com/rF%2FsanIZyrcXKOUyCNYnyNrx0mGZaaVlUWDyLkOdDVQ%3D">
+</li>
+<li>次に、[<strong>OK</strong>] をクリックして確定します。</li>
+</ol>
+<p><strong>create_dataproc_cluster</strong> を囲む線の色が変化し、ステータスが「Running」（実行中）になったことに注目してください。</p>
+<p>GCP Console でプロセスをモニタリングすることもできます。</p>
+<ol>
+<li>
+<p><strong>create_dataproc_cluster</strong> のステータスが「Running」に変わったら、<strong>ナビゲーション メニュー</strong> &gt; [<strong>Dataproc</strong>] に移動し、次の操作を行います。</p>
+</li>
+</ol>
+<ul>
+<li>
+<p>[<strong>Clusters</strong>] をクリックして、クラスタの作成と削除をモニタリングします。ワークフローによって作成されたクラスタは一時的なものです。ワークフローの実行中にのみ存在し、最後のワークフロー タスクで削除されます。</p>
+</li>
+<li>
+<p>[<strong>Jobs</strong>] をクリックして、Apache Hadoop ワードカウント ジョブをモニタリングします。ジョブ ID をクリックすると、ジョブのログ出力を確認できます。</p>
+</li>
+</ul>
+<ol start="2">
+<li>Dataproc のステータスが「Running」になったら Airflow に戻って [<strong>Refresh</strong>] をクリックすると、クラスタが完成したことを確認できます。</li>
+</ol>
+<p><code>run_dataproc_hadoop</code> プロセスが完了したら、<strong>ナビゲーション メニュー</strong> &gt; [<strong>Storage</strong>] &gt; [<strong>ブラウザ</strong>] に移動し、バケット名をクリックして <code>wordcount</code> フォルダでワードカウントの結果を確認できます。</p>
