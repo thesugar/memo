@@ -1049,3 +1049,274 @@ with models.DAG(
 <li>Dataproc のステータスが「Running」になったら Airflow に戻って [<strong>Refresh</strong>] をクリックすると、クラスタが完成したことを確認できます。</li>
 </ol>
 <p><code>run_dataproc_hadoop</code> プロセスが完了したら、<strong>ナビゲーション メニュー</strong> &gt; [<strong>Storage</strong>] &gt; [<strong>ブラウザ</strong>] に移動し、バケット名をクリックして <code>wordcount</code> フォルダでワードカウントの結果を確認できます。</p>
+
+# Google Cloud Dataproc の Cloud Datalab、Spark、Pig によるベイズ分類
+
+<h2 id="step2">概要</h2>
+<p>このラボでは、Google Cloud Datalab がプレインストールされた状態で、Google Cloud Dataproc クラスタをデプロイする方法を学習します。次に Spark を使用してデータセットの量子化を行うことで、データ モデリングの精度を、以前のラボで使用した単一の変数によるアプローチよりも向上させます。</p>
+<p>データは Google BigQuery に保存され、Google Cloud Dataproc で実行されている Google Cloud Datalab を使用して分析されます。</p>
+<p>使用する基本データセットは、米国運輸統計局のウェブサイトから取得したもので、米国内の国内線フライトに関する履歴情報を提供します。このデータセットは、データ サイエンスの多岐にわたるコンセプトと技術の実証に使用できます。また、<strong>Google Cloud Platform のデータ サイエンス</strong>と <strong>Google Cloud Platform のデータ サイエンス: 機械学習</strong>の両クエストに含まれる、その他すべてのラボで使用します。</p>
+<p><strong>Cloud Dataproc</strong> は、Apache Spark と Apache Hadoop のクラスタを簡単かつ低コストで実行できる、高速で使いやすいフルマネージド クラウド サービスです。</p>
+<p><strong>Cloud Datalab</strong> は、Google Cloud Platform でデータを探索、分析、変換、可視化し、機械学習モデルを構築するために作成された、高度なインタラクティブ ツールです。Google Compute Engine 上で動作し、Google BigQuery、Cloud SQL、Google Cloud Storage に保存された単純なテキストデータなど、さまざまなクラウド サービスに接続できます。データ サイエンティスト本来の仕事に専念できます。</p>
+<p><strong>Google BigQuery</strong> は、Google Storage と連携して動作する大規模なデータセットをインタラクティブに分析できる RESTful ウェブサービスです。</p>
+<p>目標</p>
+<ul>
+<li>
+<p>Cloud Datalab を実行している Cloud DataProc クラスタを作成する</p>
+</li>
+<li>
+<p>Cloud Datalab の Spark を使用してトレーニング データモデルを作成する</p>
+</li>
+<li>
+<p>Cloud Datalab を使用してデータモデルを評価する</p>
+</li>
+<li>
+<p>Apache Pig を使用してバルクデータを分析する</p>
+</li>
+</ul>
+
+<h2 id="step4">環境の準備</h2>
+<p>このラボでは、O'Reilly Media, Inc. 発行の書籍『<strong>Data Science on Google Cloud Platform</strong>』の第 6 章「Bayes Classifier on Cloud<em><em> </em></em>Dataproc」用に作成されたコードサンプルとスクリプトを使用します。ラボを開始したときに準備されている VM インスタンスを使用して、ラボのタスクを実行します。</p>
+<p>ラボを開始したページに、ラボ実施中を示す青信号が表示されるまでお待ちください。このインジケーターが表示されないうちは、環境の準備が整っていません。</p>
+<h2 id="step5">Data Science on GCP リポジトリのクローンを作成する</h2>
+<p>このラボでは、書籍『Data Science on Google Cloud<em> </em>Platform』の第 6 章にあるサンプルコードを使用します。Github リポジトリに、書籍用のコードサンプルとして用意されています。</p>
+<p>GCP Console で [<strong>Compute Engine</strong>] をクリックして、VM インスタンスのリストを開きます。</p>
+<p>リストされている単一の VM インスタンスの右にある [<strong>SSH</strong>] リンクをクリックし、SSH を介して VM のコンソールに接続します。</p>
+<p>SSH コンソールで次のコマンドを入力し、aptitude のローカル パッケージ データベース情報を更新してから、インストールされているすべてのパッケージを最新バージョンにアップグレードします。</p>
+<pre><code>sudo apt -y update&#x000A;sudo apt -y upgrade&#x000A;</code></pre>
+<p>SSH コンソールで、次のコマンドを入力して <code>git</code> をインストールします。</p>
+<pre><code>sudo apt -y install git&#x000A;</code></pre>
+<p><code>git</code> を使用して、このラボ用のソースコード リポジトリのクローンを作成します。</p>
+<pre><code>git clone  https://github.com/GoogleCloudPlatform/data-science-on-gcp/&#x000A;</code></pre>
+<p>リポジトリ ディレクトリに移動します。</p>
+<pre><code>cd data-science-on-gcp/06_dataproc&#x000A;</code></pre>
+<p>プロジェクト ID とデータを格納するストレージ バケットのために、ラボの後半で使用する環境変数を作成します。</p>
+<pre><code>export PROJECT_ID=$(gcloud info --format='value(config.project)')&#x000A;export BUCKET=${PROJECT_ID}&#x000A;</code></pre>
+<p>このラボ用に作成されたストレージ バケットが一意のものであることがわかるように、名前にプロジェクト ID を使用します。</p>
+<p>このラボでは、Data Science on GCP git リポジトリのコピーをクラスタの各ノードにインストールする必要があります。Cloud Dataproc クラスタをデプロイする場合は、追加の初期化スクリプトを指定して、追加のソフトウェアをデプロイし、追加の構成タスクをクラスタノードで実施できます。この機能を使用して、クラスタ内の各ノードにサンプルコードをインストールします。ファイル <code>install_on_cluster.sh</code> にはこれを実行するスクリプトが含まれています。独自のクラスタ デプロイで使用する前に、正しいユーザー名で更新する必要があります。</p>
+<p>ラボのユーザー名で <code>install_on_cluster.sh</code> スクリプトを更新し、それを一時的にコピーします。</p>
+<pre><code>sed "s/\CHANGE_TO_USER_NAME/$USER/g" install_on_cluster.sh &gt; /tmp/install_on_cluster.sh&#x000A;</code></pre>
+<p>追加の環境変数を作成して、インストール シェル スクリプトを格納する優先ラボゾーンとストレージ バケットの場所を格納します。</p>
+<pre><code>export ZONE=us-central1-a&#x000A;</code></pre>
+<pre><code>export DS_ON_GCP=gs://$BUCKET/flights/dataproc/install_on_cluster.sh&#x000A;</code></pre>
+<pre><code>export DL_INSTALL=gs://$BUCKET/flights/dataproc/datalab.sh&#x000A;</code></pre>
+<p>Data Science on GCP git リポジトリ サンプルをインストールするスクリプト（ローカルに準備）を、ストレージ バケットにコピーします。</p>
+<pre><code>gsutil cp /tmp/install_on_cluster.sh $DS_ON_GCP&#x000A;</code></pre>
+<p>変更したばかりの初期化スクリプトに加えて、Cloud Datalab のインストールに必要なアクションも指定する必要があります。そのためのスクリプトは、パブリック バケットの <code>gs://dataproc-initialization-actions/datalab/datalab.sh</code> に保存されています。 クラスタをデプロイするときに、最後の手順で独自のストレージ バケットにコピーしたスクリプトと一緒に、このスクリプトを指定できます。これは独自にステージングすることをおすすめします。</p>
+<p>標準の Cloud Dataproc スクリプトをストレージ バケットにコピーして、Cloud Datalab を Cloud Dataproc クラスタにインストールします。</p>
+<pre><code>gsutil cp gs://dataproc-initialization-actions/datalab/datalab.sh $DL_INSTALL&#x000A;</code></pre>
+<h2 id="step6">新しい Cloud Dataproc クラスタをデプロイする</h2>
+<p>このラボでは、このクラスタをマスターノード 1 つと比較的小さいワーカーノード 2 つに制限します。</p>
+<p>クラスタをデプロイします。</p>
+<pre><code>gcloud dataproc clusters create \&#x000A;   --num-workers=2 \&#x000A;   --scopes=cloud-platform \&#x000A;   --worker-machine-type=n1-standard-2 \&#x000A;   --master-machine-type=n1-standard-4 \&#x000A;   --master-boot-disk-type=pd-ssd\&#x000A;   --master-boot-disk-size=100GB\&#x000A;   --worker-boot-disk-size=100GB\&#x000A;   --worker-boot-disk-type=pd-ssd\&#x000A;   --zone=$ZONE \&#x000A;   --initialization-actions=$DL_INSTALL,$DS_ON_GCP \&#x000A;   ch6cluster&#x000A;</code></pre>
+<aside class="special"><p>このデプロイは完了するまでに 10 分程度かかります。次の一連のタスクを開始できますが、ラボのデータ分析のパートを続けるには、マスターノードがデプロイされるのを待つ必要があります。</p>
+</aside>
+<h2 id="step7">ベイズ分類</h2>
+<p>このクラスタを使用して予測モデルを拡張し、選択の幅を広げます。以前のラボでは、単一の変数である <em><em>departure delay</em></em> を使用して予測モデルを作成しました。ここでは、モデルに 2 つ目の変数 <em><em>distance</em></em> を追加して、改善を試みます。長いフライトでは、初期の遅延から回復するために、長い時間が利用可能になるので、フライト距離が到着遅延に影響を与えると予想することが合理的です。</p>
+<p>これにメリットがあるかどうかを確認するには、データを分析して結果をバケットに分割し、さまざまな組み合わせを比較できるようにする必要があります。</p>
+<p>例:</p>
+<table>
+<tr>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p>10 分遅延未満</p>
+</td>
+<td colspan="1" rowspan="1">
+<p>10～12 分遅延</p>
+</td>
+<td colspan="1" rowspan="1">
+<p>12～15 分遅延</p>
+</td>
+<td colspan="1" rowspan="1">
+<p>15 分遅延超</p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p>100 マイル未満</p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p>100〜500 マイル</p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p>500 マイル超</p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+<td colspan="1" rowspan="1">
+<p></p>
+</td>
+</tr>
+</table>
+<p>これらの各バケットに対して、意思決定計算を個別に行うことができます。フライトが予定通りに到着する確率が基準を満たす時点を、予測できるようにすることを目的としています。この場合、フライトの 70% が 15 分未満の遅延で到着するという基準になります。これらの組み合わせごとにこの分析を行い、そのデータを予測モデルの基礎として使用できます。この手法は<em><em>ベイズ分類</em></em>と呼ばれます。</p>
+<p>各ビンに十分なサンプルがある場合、この手法は有効です。モデルに 2 つの変数と約 600 万のサンプルがあれば、データは十分です。このコンセプトをより多くの変数に拡張すると、変数の各組み合わせのサンプル数が少なくなりすぎて、予測に使用しても信頼性が低下します。</p>
+<p>このためのスケーラブルなアプローチでは、予測に使用する変数が独立していると仮定して、各変数のビン分割確率を個別に計算したものに確率を掛けて、実際の最終的な予測を得ます。2 つの変数と大きなデータセットがあれば、データをビン分割し、すべての条件付き確率を直接推定できます。</p>
+<p>クラスタが実行され、実行中の Cloud Datalab に接続できるようになったら、分析を行います。</p>
+<h3>クラスタへの Datalab アクセスのためのファイアウォール ルールを構成する</h3>
+<p>セキュリティ上のベスト プラクティスとして、クラスタへのインターネット アクセスは、デフォルトで許可されていません。マスターノードで実行されている Cloud Datalab サービスに接続できるようにするには、特定のファイアウォール ルールを作成して適用する必要があります。</p>
+<p>ファイアウォール ルールを作成して、インターネットから <code>master</code> タグでタグ付けされたインスタンスへの TCP ポート 8080 アクセスを許可します。このタグは、この手順と次の手順で一貫している限り、何でも構いません。特定の VPC ネットワークが指定されていないので、このファイアウォール ルールは、クラスタがデプロイされているデフォルトの VPC ネットワークに対して構成されています。</p>
+<p>以下を実行してファイアウォールを作成します。</p>
+<pre><code>export MYRANGE=0.0.0.0/0&#x000A;gcloud compute firewall-rules create datalab-access \&#x000A;  --allow tcp:8080 \&#x000A;  --source-ranges $MYRANGE \&#x000A;  --target-tags master&#x000A;</code></pre>
+<p>ここで、クラスタのマスターノードとしてデプロイされている compute インスタンスに名前を付けます。</p>
+<pre><code>export MASTERNODE=$(gcloud dataproc clusters describe ch6cluster --format='value(config.masterConfig.instanceNames)')&#x000A;echo $MASTERNODE&#x000A;</code></pre>
+<aside class="special"><p><strong>注:</strong> マスターノードのインスタンス名 <code>ch6cluster-m</code> が返されない場合は、数分待ってからこのコマンドを繰り返してください。</p>
+</aside>
+<p>適切なネットワーク タグをマスターノードの compute インスタンスに追加します。</p>
+<pre><code>gcloud compute instances add-tags $MASTERNODE --tags master --zone $ZONE&#x000A;</code></pre>
+<p>コンソールで Cloud Datalab セッションの URL をエコーします。リンクをクリックして Cloud Datalab セッションを開始します。</p>
+<pre><code>export MASTERIP=$(gcloud compute instances describe $MASTERNODE --zone $ZONE --format='value(networkInterfaces[0].accessConfigs[0].natIP)')&#x000A;echo http://$MASTERIP:8080&#x000A;</code></pre>
+<h2 id="step8">Spark SQL を使用してフライトデータを分析する</h2>
+<p>Cloud Datalab が実行されるクラスタが作成されたので、これまでと同様に Jupyter ノートブックを使用して、インタラクティブにデータセットを分析できます。O'Reilly Media, Inc. の『Data Science on Google Cloud Platform』に記載されている github コード リポジトリの一部である事前構成済みのノートブックを開くことで、データセットを簡単に検索できます。このノートブックでは、データの量子化がデータ モデリングの改善にどのように役立つかを確認できる、可視化手法を説明しています。</p>
+<p>Datalab のホームページで、[<strong>notebooks</strong>] リンクをクリックして、notebooks フォルダを開きます。</p>
+<p><img alt="image003.png" src="https://cdn.qwiklabs.com/UnZoPwlInWab0Iq3DTJl8Hfb90rIJCQ%2Fcno8rAQKXSA%3D"></p>
+<p>[<strong>+Notebook</strong>] をクリックして、新しい Jupyter ノートブックを作成します。</p>
+<p>最初のセルに以下を入力してから、[<strong>Run</strong>] をクリックします。</p>
+<pre><code>!git clone http://github.com/GoogleCloudPlatform/data-science-on-gcp&#x000A;</code></pre>
+<p>コマンドが完了したら、ページの左上にある [Google Cloud Datalab] リンクをクリックします。</p>
+<p>「<strong>このサイトを離れますか？</strong>」という 警告ダイアログが表示されたら [<strong>このページを離れる</strong>] をクリックします。</p>
+<p><strong>datalab/notebooks/data-science-on-gcp/06_dataproc</strong> フォルダに移動します。</p>
+<p><strong>quantization.ipynb</strong> を開きます。</p>
+<p>最初のセルで、<code>PROJECT</code> と <code>BUCKET</code> の値をラボセッションのプロジェクト ID に置き換えます。ラボの地域は <code>us-central1</code> に設定されているので、このままにしておきます。</p>
+<aside class="special"><p><b>注:</b> このラボの自動ラボ設定プロセスでは、プロジェクト ID を使用して名前が付けられた Google Cloud Storage バケットが事前に作成されています。このストレージ バケットには、ここで使用するデータファイルがいくつか含まれています。これらのデータファイルは、ラボの後半でまた使用します。</p>
+</aside>
+<p>Cloud Storage から CSV ファイルをインポートして、SparkSQL のテーブル定義を作成するセルが表示されるまで、ページを下にスクロールします。</p>
+<p>最初の行を変更して、ファイル <code>all_flights-00000-*</code> ではなくファイル <code>all_flights-00004-*</code> をインポートします。</p>
+<pre><code>inputs = 'gs://{}/flights/tzcorr/all_flights-00004-*'.format(BUCKET)&#x000A;</code></pre>
+<p>タスクバーで [<strong>Run &gt;</strong>] を展開し、[<strong>Run all Cells</strong>] をクリックします。</p>
+<p>「<strong>Exploration using BigQuery</strong>」セクションのページに戻ります。</p>
+<p>最初のステップで、出発遅延と距離変数を量子化するための最も効果的な方法を学習します。データのおおよその分布を見て、予測変数の値が変化するにつれて確率がどのような影響を受けるかを確認します。</p>
+<p>Jupyter ノートブックの最初のセクションでは、BigQuery を使用して、<code>flights.tzcorr</code> テーブルから 0.1% のレコードのランダム サンプルを取得します。2 つの変数の合理的な最大値と最小値が含まれています。これは Pandas データフレームに保存されてから、Seaborn を使用して hexbin チャートとしてプロットされます。</p>
+<p><img alt="72bda8cf2c0d75eb.png" src="https://cdn.qwiklabs.com/F1zbxtc%2FV3iJAYC2uWa%2FJKHPN1IptQ1PQPJnHZhaW8Y%3D"></p>
+<p>sans-serif フォントが使用できないことを示すフォント警告が表示されますが、無視しても問題ありません。</p>
+<p>hexbin プロットは、遅延と距離の各組み合わせにおけるサンプル数を示します。あらゆる距離で広範囲の遅延が発生する可能性があり、その逆もまた同様です。これらの変数を独立したものとして扱えないことを示す大きな傾向はありません。</p>
+<p>分布プロットは、時間通りにまたはわずかに早く出発するフライトに、データが大きくクラスタ化されていることを示していますが、ほとんどのフライトは 500 マイル未満です。このデータをどのようにビン分割するかを決める場合、特にエッジ付近でまばらに表示されているセクションでは、十分なサンプルがあることを確認する必要があります、つまり、単純な等間隔のビンを使用することはできず、より効果的なアプローチを考え出す必要があります。</p>
+<p>このラボでは、まず Spark SQL を使用してデータのサンプルを分析し、どのような分布になるのかを確認します。データのサブセットを直接 Spark SQL にインポートして、BigQuery を使用せずにクラスタ内で分析を実行します。BigQuery を使用して分析することもできますが、この方法で Hadoop クラスタを使用すると、柔軟性が向上します。</p>
+<p>さらに、ここではトレーニング データだけを使用して、このモデルを構築します。ノートブックの最初の BigQuery hexbin プロットは、データセット全体に基づいています。</p>
+<p>次の 10 個の Jupyter ノートブック セルのセットは、ノートブックの「<strong>Set up views in Spark SQL</strong>」セクションと「<strong>Restrict to train days</strong>」セクションにあります。そこで、BigQuery テーブルの作成に使用したのと同じ初期化 CSV ファイルを使用して、タイムゾーン補正データのサブセットを作成します。この場合は、数十万件のレコードを含む単一の CSV ファイルのみをインポートします。これにより、合理的な意思決定を行うのに十分なデータを確保しつつ、クエリとプロットを比較的迅速に実行できます。次に、Bigquery からの flights.trainday テーブルのエクスポートを使用して、トレーニング日数の Spark SQL テーブルを作成します。最後に、spark SQL フライトと trainday テーブルを結合して、トレーニング データのみを含む Spark SQL テーブルを作成します。</p>
+<p>ノートブックの「<strong>Hexbin plot</strong>」セクションでは、トレーニング用の Spark SQL テーブルを使用して、Pandas データフレームを作成します。それを BigQuery データセットに基づく以前の例と比較します。このデータフレームの記述では、結合されたデータセットに 12 万を超えるレコードがあることが示されています。</p>
+<p>このデータのサブセットが再び Hexbin チャートとしてプロットされ、全体的なパターンは変わっていないことがわかります。ノートブックは、メモリ使用量を小さく保つために、データのうち 2% のサンプルを使用します。このラボでは、CSV ファイルのデータを 1 つだけ使用しているので、これは必ずしも必要ではありませんが、データセット全体を選択した場合は必要になります。</p>
+<p>「<strong>Quantization</strong>」セクションでは、Spark SQL を使用して、トレーニング フライト テーブルを分析するために組み込まれている <code>approxQuantile</code> 関数を使用して分位数を作成します。これにより、ほぼ等しいサンプル数のビンを作成するために使用する必要がある変数の範囲を特定します。ここで使用されているコードは、各パラメータに対して 10 分位数を要求します。それぞれの場合に返される最小値はデータに含まれる最小値であり、ビンの制限については無視されます。残りの 9 つの値は、各変数の 10 分位数のそれぞれの間の境界を定義します。</p>
+<p>得られたサンプルデータは、次の分位数と同様の結果を生成します。</p>
+<table>
+<tr>
+<td colspan="1" rowspan="1">
+<p><code>Distance</code></p>
+</td>
+<td colspan="1" rowspan="1">
+<p><code>[31.0, 226.0, 332.0, 429.0, 547.0, 651.0, 821.0, 985.0, 1235.0, 1744.0]</code></p>
+</td>
+</tr>
+<tr>
+<td colspan="1" rowspan="1">
+<p><code>Dep_Delay</code></p>
+</td>
+<td colspan="1" rowspan="1">
+<p><code>[-39.0, -7.0, -5.0, -4.0, -2.0, -1.0, 1.0, 6.0, 15.0, 39.0]</code></p>
+</td>
+</tr>
+</table>
+<p>近似値であるため、値は正確には一致しませんが、<code>approxQuantile</code> 関数呼び出しの最後のパラメータである相対誤差パラメータをゼロに変更すると、値は一致します。</p>
+<p>次に、ビン分割が有効であることを確認するために、空のノートブック セルでこのクエリを調整します。そして、各変数の 3 番目の分位数に対応する、ビンの組み合わせのうち、フライト レコード数を 1 つカウントします。</p>
+<pre><code>results = spark.sql('SELECT COUNT(*) FROM flights WHERE dep_delay &gt;= -5 AND dep_delay &lt; -4 AND distance &gt;= 332 AND distance &lt; 429')&#x000A;results.show()&#x000A;</code></pre>
+<p>これにより、インポートしたサンプル データセットの全フライト数のうち、予想された 1% に近い約 1,500 レコードが返されます。</p>
+<p>出発遅延と距離の分位数範囲の 100 個の組み合わせごとに、これを再計算することは、次に使用する Apache Pig のようなデータ分析ツールにより適したタスクです。</p>
+<h2 id="step9">Cloud Datalab セッションの終了</h2>
+<p>ラボの次のパートに必要なリソースを解放するために、実行中のすべての iPython Notebook を終了する必要があります。</p>
+<p>まず、量子化ノートブックのコピーを保存します。</p>
+<p>ページの左上にある [<strong>Notebook</strong>] メニューをクリックしてから [<strong>Save copy</strong>] をクリックします。</p>
+<p>最初に開いた [Google Cloud Datalab] タブをクリックします。Datalab フォルダと、おそらく iPython ノートブックが表示されます。</p>
+<p>ページの右上にある <strong>Running Sessions</strong> アイコンをクリックします。</p>
+<p><img alt="9c398ccd2609fc13.png" src="https://cdn.qwiklabs.com/GjvojL0gtjHYYVS%2Fml172TVYpLriFvk3SwmuqWxep0w%3D"></p>
+<p>これにより、アクティブなノートブック セッションが 2 つ以上表示されます。アクティブな各ノートブックの [<strong>Shutdown</strong>] ボタンをクリックして終了します。</p>
+<p><img alt="d01e3fb3d8f6d44b.png" src="https://cdn.qwiklabs.com/6%2BbA9xN32npUqgKmAoIrNGU1j%2FH5%2FcIXngC6dXCNQnc%3D"></p>
+<p>開いているすべての Cloud Datalab ブラウザタブを終了します。</p>
+<h2 id="step10">Apache Pig を使用したバルクデータ分析</h2>
+<p>Apache Pig は、大規模データセットを分析するためのプラットフォームです。データ分析タスクを表現するための高水準プログラミング言語と、Apache Pig プログラムを評価するためのインフラストラクチャを組み合わせています。Google Cloud Dataproc クラスタは、Apache Pig をネイティブでサポートしています。</p>
+<p>SSH コンソール ウィンドウに戻って以下を実行します。第 6 章のコードサンプルにあるサンプル Pig スクリプト <code>bayes.pig</code> を、Cloud Storage Bucket を指すように更新します。</p>
+<pre><code>sed "s/cloud-training-demos-ml/$BUCKET/g" bayes.pig &gt; mybayes.tmp&#x000A;sed "s/all_flights-00000-/all_flights-00004-/g" mybayes.tmp &gt; mybayes.pig&#x000A;</code></pre>
+<p>Pig スクリプトは、Cloud Dataproc クラスタを使用して、フライトの分布を計算します。以前のセクションで距離について設定された 10 分位数範囲と、出発遅延について設定された 10 分位数範囲を使用します。合計 100 個の別々の分布バケットです。</p>
+<p>Pig スクリプトを表示します。</p>
+<pre><code>cat mybayes.pig&#x000A;</code></pre>
+<p>Pig スクリプトは、以前のセクションで Spark と Cloud Datalab で使用したのと同じ CSV データシャードからフライトデータを読み込みます。</p>
+<pre><code class="language-bash prettyprint">FLIGHTS =&#x000A;   LOAD 'gs://qwiklabs-gcp-c7060a31b8d8fad3/flights/tzcorr/all_flights-00004-*'&#x000A;   using org.apache.pig.piggybank.storage.CSVExcelStorage(',', 'NO_MULTILINE', 'NOCHANGE')&#x000A;   AS (FL_DATE:chararray,UNIQUE_CARRIER ...&#x000A;</code></pre>
+<p>次に、FLIGHTS テーブルの DISTANCE と DEP_DELAY の両方のデータ フィールドの各分位数の分布範囲に 0～9 のビンラベルを割り当てるステートメントを使用して、Flights2 テーブルが生成されます。ARR_DELAY が 15 分未満かどうかに基づいて設定される ontime と呼ばれるブール値も使用されます。</p>
+<pre><code class="language-bash prettyprint">FLIGHTS2 = FOREACH FLIGHTS GENERATE&#x000A;     (DISTANCE &lt; 251? 0:&#x000A;  ...&#x000A;          9))))))))) AS distbin:int,&#x000A;     (DEP_DELAY &lt; -6? 0:&#x000A;...&#x000A;          9))))))))) AS depdelaybin:int,&#x000A;     (ARR_DELAY &lt; 15? 1:0) AS ontime:int;&#x000A;</code></pre>
+<p>その後、データは各ビンの組み合わせにグループ化され、FLATTEN 関数を使用して各配布ビンの組み合わせに対する ontime フライトの平均数が計算されます。</p>
+<pre><code class="language-bash prettyprint">grouped = GROUP FLIGHTS2 BY (distbin, depdelaybin);&#x000A;result = FOREACH grouped GENERATE&#x000A;           FLATTEN(group) AS (dist, delay),&#x000A;           ((double)SUM(FLIGHTS2.ontime))/COUNT(FLIGHTS2.ontime) AS ontime:double;&#x000A;</code></pre>
+<p>最後に、結果が Cloud Storage Bucket に書き出されます。</p>
+<pre><code class="language-bash prettyprint">store result into 'gs://qwiklabs-gcp-c7060a31b8d8fad3/flights/pigoutput/' using PigStorage(',','-schema');&#x000A;</code></pre>
+<aside class="special"><p>スクリプトでビンを定義するために使用される分位数の値は、テスト実行で報告された値と完全には一致しません。しかし、単一の CSV ファイルだけではなく、Jupyter Notebook を変更して完全なデータセットを分析する場合は、はるかに近くなります。完全な分析を実行すると、このクラスタでは 10 分程度かかります。必要に応じて、ビンの値をここで変更して修正できます。approxQuantile 関数も同様に近似値であるため、完全な実行でも、最終値は常にスクリプト内の値とわずかに異なることになります。</p>
+</aside>
+<p>Pig ジョブをクラスタに送信します。</p>
+<pre><code>gcloud dataproc jobs submit pig --cluster ch6cluster --file  mybayes.pig&#x000A;</code></pre>
+<p>これでジョブが開始され、個々のワーカー コンポーネントが Google Cloud Dataproc クラスタ全体に分散されます。完了するまでに 2〜3 分かかります。うまくいかない場合は、すべての Google Cloud Datalab Jupyter ノートブックが終了して、リソースが解放されていることを確認してください。</p>
+<p>完了すると、Google Cloud Storage バケットの <code>/flights/pigoutput/part-r-00000</code> というファイルに保存されたファイルで、出力データを検査できます。</p>
+<p>次のコマンドを入力して、このファイルの内容を一覧表示します。</p>
+<pre><code>gsutil cat gs://$BUCKET/flights/pigoutput/part-r-00000&#x000A;</code></pre>
+<p>この出力ファイルには、各距離および遅延分布ビンの ontime 到着確率が含まれています。ファイルの 1 つのセクション（5 つ目の距離の五分位数）は、650～800 マイルの範囲のフライトを参照し、10 個の遅延五分位数のそれぞれの ontime 確率を示します。</p>
+<pre><code class="language-bash prettyprint">5,0,0.9794553272814143&#x000A;5,1,0.98125&#x000A;5,2,0.9742673338098642&#x000A;5,3,0.9722785665990534&#x000A;5,4,0.9630444346678398&#x000A;5,5,0.9487750556792873&#x000A;5,6,0.9252873563218391&#x000A;5,7,0.8756578947368421&#x000A;5,8,0.5220170454545454&#x000A;5,9,0.009246417013407305&#x000A;</code></pre>
+<p>このデータは、フライトの約 70% が時間どおりに到着することを示しています。それは、最初の 7 つの遅延ビンの時間どおりに到着するフライトの割合が高く、ビン 8 と 9 の数が急激に減少しているためです。ビン 8 のカットオフ時間は 15 分です。</p>
+<p>これは基本的な初期レベルのアプローチであり、いくつかの方法で改良できます。</p>
+<ul>
+<li>範囲をデータのトレーニング サブセットのみに制限する</li>
+<li>1 つのシャードだけでなく、データセット全体に対して実行する</li>
+<li>より意味のあるラベルをつける（たとえば、距離のビン番号を距離に対応する名前などに置き換える）</li>
+</ul>
+<p>ここで取り上げていない追加の分析では、距離ビンの分布範囲をかなり大きくできることがわかります。また、意思決定モデルで参照したい重要な数は、ontime 到着の確率が 70% を下回る、距離範囲ごとの特定の出発遅延です。</p>
+<p><code>bayes_final.pig</code> スクリプトには、これらすべての変更が組み込まれています。このラボの以前の分析タスクに使用した単一のデータシャードではなく、データセット全体に対して実行するようにデフォルトで構成されているので、より確実な結果が得られます。</p>
+<p>まず既存の Pig 出力ストレージ ファイルをクリーンアップし、そのソースファイルと出力フォルダ用のストレージ バケットを指すように Pig スクリプトを更新します。</p>
+<pre><code>gsutil rm -r gs://$BUCKET/flights/pigoutput&#x000A;sed "s/cloud-training-demos-ml/$BUCKET/g" bayes_final.pig &gt; mybayes_final.pig&#x000A;</code></pre>
+<p>更新された Pig ジョブをクラスタに送信して、次の処理を行います。</p>
+<pre><code>gcloud dataproc jobs submit pig --cluster ch6cluster --file  mybayes_final.pig&#x000A;</code></pre>
+<p>データセット全体の処理タスクを完了するのに 5 分程度かかります。</p>
+<p>Google Cloud Storage バケット内の Pig 出力ファイル <code>/flights/pigoutput/part-r-00000</code> を完了した後で調べると、さらに約されたレポートが表示されます。</p>
+<p>次のコマンドを入力して、ファイルの内容を一覧表示します。</p>
+<pre><code>gsutil cat gs://$BUCKET/flights/pigoutput/part-r-00000&#x000A;</code></pre>
+<p>これにより、距離範囲の縮小されたバケットで、予測到着時間が 70% を下回る出発遅延しきい値が表示されます。</p>
+<pre><code class="language-bash prettyprint">368,15&#x000A;575,17&#x000A;838,18&#x000A;1218,18&#x000A;9999,19&#x000A;</code></pre>
+<p>これは、368 マイルまでのフライトでは、フライトが 15 分（またはそれ以上）遅れると、到着時間も遅れることが予想されることを意味します。368 マイル～575 マイルのフライトの場合、しきい値のカットオフは 17 分です。</p>
+<aside>
+独自の環境で利用可能なリソースがある場合は、追加のワーカーを使用してクラスタを拡張し、この分析をより迅速に完了できます。標準インスタンスよりもかなり安価なプリエンプティブ インスタンスを、Hadoop クラスタで効果的に使用することもできます。プリエンプティブ インスタンスは、Google によって予告なしに終了されることがあります。Cloud Dataproc クラスタのフォールト トレラントな性質により、この場合に受ける唯一の影響は、タスクに時間がかかるようになることです。優先的に削除されていないノードで、ジョブが再スケジュールされるためです。
+
+情報提供のみを目的としたコードのサンプルの場合、Qwiklabs セッションでこれだけ多くのワーカー リソースをリクエストすることはできません。
+
+<code>&#x000A;gcloud dataproc clusters update ch6cluster&#x000A;   --num-preemptible-workers=15 --num-workers=5</code>
+</aside>
+<p>前提条件の詳細な調査など、このラボで詳細に説明されていないさらなる分析は、O'Reilly Media, Inc. の『<strong>Data Science on Google Cloud Platform</strong>』の第 6 章で完全に説明されています。ここで説明されているコンセプトをさらに掘り下げています。</p>
