@@ -1320,3 +1320,157 @@ with models.DAG(
 <code>&#x000A;gcloud dataproc clusters update ch6cluster&#x000A;   --num-preemptible-workers=15 --num-workers=5</code>
 </aside>
 <p>前提条件の詳細な調査など、このラボで詳細に説明されていないさらなる分析は、O'Reilly Media, Inc. の『<strong>Data Science on Google Cloud Platform</strong>』の第 6 章で完全に説明されています。ここで説明されているコンセプトをさらに掘り下げています。</p>
+
+# Google Cloud ML による分散型機械学習
+<h2 id="step2">概要</h2>
+<p>このラボでは、Google Cloud ML を使用してディープ ニューラル ネットワーク モデルの作成と構成を行います。次に Google Cloud ML Engine を使用して、トレーニング済みモデルを用いた予測を行います。</p>
+<p>このクエストの前のラボ（<strong>TensorFlow での機械学習</strong>）で開発した基本的な Google Cloud ML 機械学習フレームワークを拡張して、機械学習モデルを最適化するさまざまなアプローチを探ります。</p>
+<p>ラボで使用する基本データセットは、米国運輸統計局のウェブサイトから取得したもので、米国内の国内線フライトに関する履歴情報を提供します。このデータセットは、データ サイエンスの多岐にわたるコンセプトと技術の実証に使用できます。また、<strong>Google Cloud Platform のデータ サイエンス</strong>と <strong>Google Cloud Platform のデータ サイエンス: 機械学習</strong>の両クエストに含まれる、その他すべてのラボで使用します。このラボで使用されている特定のデータファイルは、個別のトレーニング データセットと評価データセットを提供します。これらのファイルがどのように生成されるかについての詳細は、このクエストの前のラボ（<strong>Apache Beam と Cloud Dataflow を使用したタイム ウィンドウ データの処理（Java）</strong>）で説明しています。</p>
+<p>Cloud Datalab は、Google Cloud Platform でデータを探索、分析、変換、可視化し、機械学習モデルを構築するために作成された高度なインタラクティブ ツールです。Google Compute Engine 上で動作し、Google BigQuery、Cloud SQL、Google Cloud Storage に保存された単純なテキストデータなど、さまざまなクラウド サービスに接続できます。そのため、データ サイエンティストは本来の仕事に専念できます。</p>
+<p>Google BigQuery は、Google Cloud Storage と連携して動作する大規模なデータセットをインタラクティブに分析できる RESTful ウェブサービスです。</p>
+<p>目標</p>
+<ul>
+<li>
+<p>Python TensorFlow 機械学習フレームワークを拡張して、ディープ ニューラル ネットワーク分類を使用する</p>
+</li>
+<li>
+<p>ディープ ニューラル ネットワーク分類を変更して、ワイド＆ディープ モデルを実装する</p>
+</li>
+<li>
+<p>トレーニング済みモデルを Cloud ML Engine にデプロイし、Python（Cloud ML Engine に対し API 呼び出しを実行する）を使用して予測を行う</p>
+</li>
+</ul>
+
+<h2 id="step4">環境の準備</h2>
+<p>ラボの開始時に Linux 仮想マシンが用意されています。その VM を使用してラボのすべてのタスクを実施します。この VM は Google Compute Engine の Debian 用標準マシンイメージを使用しています。</p>
+<p>このラボでは、O'Reilly Media, Inc. の書籍『<strong>Data Science on Google Cloud Platform</strong>』用に開発されたコードサンプルとスクリプトを使用します。</p>
+<p>ラボを開始したページに、ラボ実施中を示す青信号が表示されるまでお待ちください。このインジケーターが表示されないうちは、環境の準備が整っていません。</p>
+<h2 id="step5">開始</h2>
+<p>GCP Console で [<strong>Compute Engine</strong>] をクリックして、VM インスタンスのリストを開きます。</p>
+<p>リストされている単一の VM インスタンスの右にある [<strong>SSH</strong>] リンクをクリックし、SSH を介して VM のコンソールに接続します。</p>
+<p>SSH コンソールで次のコマンドを入力し、aptitude のローカル パッケージ データベース情報を更新してから、インストールされているすべてのパッケージを最新バージョンにアップグレードします。</p>
+<pre><code>sudo apt -y update&#x000A;sudo apt -y upgrade&#x000A;</code></pre>
+<p>次のコマンドを入力して Python pip をインストールします。</p>
+<pre><code>sudo apt -y install python-pip&#x000A;</code></pre>
+<p>pip を最新バージョンにアップグレードします。</p>
+<pre><code>sudo pip install --upgrade pip&#x000A;</code></pre>
+<p>ローカル環境変数を定義します。</p>
+<pre><code>export PROJECT_ID=$(gcloud info --format='value(config.project)')&#x000A;export BUCKET=${PROJECT_ID}&#x000A;</code></pre>
+<p>ラボ開始時に GCP プロジェクトが作成され、デフォルトのラボ プロジェクト ID をバケット名として使用する Cloud Storage バケットが作成されました。これらの変数を定義すると、ラボの実施中にプロジェクトとバケットを参照しやすくなります。</p>
+<h2 id="step6">ディープ ニューラル ネットワーク機械学習モデルを作成する</h2>
+<p>このクエストの前のラボ（<strong>TensorFlow での機械学習</strong>）では、線形分類を使う機械学習モデルを開発するために Google Cloud ML Engine で使用できる Python ベースの機械学習モデルを作成する方法と、さまざまな機能セットを使用するようにそのモデルを変更する方法を学習しました。</p>
+<p>このラボでは同じ Python フレームワークを引き続き使用して、基本的なディープ ニューラル ネットワーク モデルを実装します。その後、機能を組み合わせてモデルのパフォーマンスを改善する方法を評価する、ワイド＆ディープ ニューラル ネットワーク モデルに拡張します。</p>
+<p>事前構成済みの Python モデルコードを、ストレージ バケットからラボ VM のローカル ストレージにコピーします。</p>
+<pre><code>gsutil cp gs://${BUCKET}/flights/chapter9/linear-model.tar.gz ~&#x000A;</code></pre>
+<p>ファイルを解凍します。</p>
+<pre><code>cd ~&#x000A;tar -zxvf linear-model.tar.gz&#x000A;</code></pre>
+<p><code>tensorflow</code> ディレクトリに移動します。</p>
+<pre><code>cd ~/tensorflow&#x000A;</code></pre>
+<p><code>model.py</code> を編集して、ディープ ニューラル ネットワーク機械学習モデルを使用するようにコードを構成します。</p>
+<pre><code>nano -w ~/tensorflow/flights/trainer/model.py&#x000A;</code></pre>
+<p>カテゴリ フィールドに次元削減関数を適用する関数を追加します。これにより、線形カテゴライザでテストしたときに使用した 1,000 個の離散化値から、ワンホット エンコード変数の数が減少します。埋め込みは、ワンホット エンコード時に 1,000 個の別々の列で表現される可能性があるスパースデータ フィールドを変換し、はるかに小さい数にマッピングするため、処理する必要がある可変次元の数が大幅に減少します。</p>
+<p>次のコードを、<code>linear_model</code> 関数の下、<code>serving_input_fn</code> の定義の上に挿入します。</p>
+<pre><code>def create_embed(sparse_col):&#x000A;    dim = 10 # default&#x000A;    if hasattr(sparse_col, 'bucket_size'):&#x000A;       nbins = sparse_col.bucket_size&#x000A;       if nbins is not None:&#x000A;          dim = 1 + int(round(np.log2(nbins)))&#x000A;    return tflayers.embedding_column(sparse_col, dimension=dim)&#x000A;</code></pre>
+<p>ここで関数定義を追加して、ディープ ニューラル ネットワーク モデルを作成します。</p>
+<p>先ほど追加した <code>create_embed</code> 関数の下に、次の行を追加します。</p>
+<pre><code>def dnn_model(output_dir):&#x000A;    real, sparse = get_features()&#x000A;    all = {}&#x000A;    all.update(real)&#x000A;&#x000A;    # create embeddings of the sparse columns&#x000A;    embed = {&#x000A;       colname : create_embed(col) \&#x000A;          for colname, col in sparse.items()&#x000A;    }&#x000A;    all.update(embed)&#x000A;&#x000A;    estimator = tflearn.DNNClassifier(&#x000A;         model_dir=output_dir,&#x000A;         feature_columns=all.values(),&#x000A;         hidden_units=[64, 16, 4])&#x000A;    estimator = tf.contrib.estimator.add_metrics(estimator, my_rmse)&#x000A;    return estimator&#x000A;</code></pre>
+<p>ファイルの末尾にある <code>run_experiment</code> 関数まで、ページを下にスクロールします。線形分類関数の代わりにディープ ニューラル ネットワーク推定関数を呼び出すように、テストを再構成する必要があります。</p>
+<p><code>estimator = linear_model(output_dir)</code> の行を、次のように置き換えます。</p>
+<pre><code>  #estimator = linear_model(output_dir)&#x000A;  estimator = dnn_model(output_dir)&#x000A;</code></pre>
+<p><strong>CTRL</strong>+<strong>X</strong> を押してから <strong>Y</strong> を押します。<strong>Enter</strong> を押して <code>model.py</code> を保存します。</p>
+<p>ここで、データとモデルのソースや出力先の場所として Cloud Storage バケットを指すように、環境変数をいくつか設定します。</p>
+<pre><code>export REGION=us-central1&#x000A;export OUTPUT_DIR=gs://${BUCKET}/flights/chapter9/output&#x000A;export DATA_DIR=gs://${BUCKET}/flights/chapter8/output&#x000A;</code></pre>
+<p>この演習用のソースデータは、ラボを開始したときに上記の場所にコピーされています。</p>
+<p>これで、Python モデルを使用して Cloud ML Engine にジョブを送信し、Google Cloud ML で使用可能な TensorFlow 用の分散クラウド リソースを使用してより大きなデータセットを処理する準備が整いました。</p>
+<p>ジョブを識別できるように <code>jobname</code> を作成し、作業ディレクトリに移動します。</p>
+<pre><code>export JOBNAME=dnn_flights_$(date -u +%y%m%d_%H%M%S)&#x000A;cd ~/tensorflow&#x000A;</code></pre>
+<p>Cloud-ML タスクの提供リージョン、ステージングと作業データ用のクラウド ストレージ バケット、トレーニング パッケージ ディレクトリ、トレーニング モジュール名などのパラメータを送信します。トレーニングの場所や評価データなど、トレーニング ジョブのカスタム パラメータは、すべての <code>gcloud</code> パラメータの後にカスタム パラメータとして指定されます。</p>
+<pre><code>gcloud ml-engine jobs submit training $JOBNAME \&#x000A;  --module-name=trainer.task \&#x000A;  --package-path=$(pwd)/flights/trainer \&#x000A;  --job-dir=$OUTPUT_DIR \&#x000A;  --staging-bucket=gs://$BUCKET \&#x000A;  --region=$REGION \&#x000A;  --scale-tier=STANDARD_1 \&#x000A;  --runtime-version=1.10 \&#x000A;  -- \&#x000A;  --output_dir=$OUTPUT_DIR \&#x000A;  --traindata $DATA_DIR/train* --evaldata $DATA_DIR/test*&#x000A;</code></pre>
+<aside class="special"><p><strong>注:</strong> タスク モジュールが見つからないというエラーが表示された場合は、<code>~/tensorflow</code> ディレクトリから実行していることを確認してください。</p>
+</aside>
+<p>Google Cloud Platform Console ブラウザ セッションに戻ります。</p>
+<p><strong>ナビゲータ メニュー</strong> アイコンをクリックして、左にナビゲータ パネルを開きます（まだ開いていない場合）。</p>
+<p><img alt="2c6bf7fa8a63bc0b.png" src="https://cdn.qwiklabs.com/OK%2F0MSTpsmIbK3Gu201oc%2Fa8maRAhwsdJ903Csr4T%2F4%3D"></p>
+<p>下にスクロールし、[<strong>ML Engine</strong>] をクリックして Google Cloud ML Engine 管理ページを開きます。</p>
+<p><strong>dnn_flights-YYMMDD-HHMMSS</strong> という名前のジョブをクリックして開きます。</p>
+<p>トレーニング プロセスの間、ジョブをモニタリングします。これには 5～10 分かかります。場合によっては、最新の情報が表示されるようにブラウザを更新する必要があります。</p>
+<p>ジョブが完了したら、[<strong>ログを表示</strong>] をクリックします。</p>
+<p>多数のイベントが表示されますが、ジョブ実行の終わり頃に「<code>Saving dict for global step ...</code>」で始まる説明が付いたイベントが表示されます。</p>
+<p>そのイベントをクリックして詳細を開きます。</p>
+<p>次に示すように、分析指標の全リストが表示されます。</p>
+<p><img alt="d8f34d68b4c6d3d5.png" src="https://cdn.qwiklabs.com/CxLKWw3ftTbbsaXQZClVVMOZb%2Borm6B04FAlboUEU8Q%3D"></p>
+<h2 id="step7">ワイド＆ディープ ニューラル ネットワーク モデルを追加する</h2>
+<p>空港を広い地理的ゾーンに関連付け、そこから簡略化された航空交通経路を導き出せる特徴を作成することによって、追加の特徴を含めるようにモデルを拡張します。まず米国をカバーする n*n グリッドのロケーション バケットを作成してから、出発空港と到着空港をそれぞれ特定のグリッド ロケーションに割り当てます。また、特徴の関連付けと呼ばれる手法を使用して、追加の特徴を作成することもできます。これにより特徴の組み合わせが作成され、有用な分析情報を提供できます。ここでは、出発と到着のグリッド ロケーションの組み合わせをまとめて航空交通経路の近似を作成し、さらに出発地と目的地の空港 ID の組み合わせをグループ化して、そのような各ペアをモデルの特徴として使用します。</p>
+<p>SSH コンソールに戻り、次のコマンドを入力して <code>model.py</code> 関数を再度編集します。</p>
+<pre><code>nano -w ~/tensorflow/flights/trainer/model.py&#x000A;</code></pre>
+<p>次の 2 つの関数を <code>linear_model</code> 関数の上に追加して、ワイド＆ディープ ニューラル ネットワーク モデルを実装します。</p>
+<pre><code>def parse_hidden_units(s):&#x000A;    return [int(item) for item in s.split(',')]&#x000A;&#x000A;def wide_and_deep_model(output_dir,nbuckets=5,&#x000A;                        hidden_units='64,32', learning_rate=0.01):&#x000A;    real, sparse = get_features()&#x000A;    # lat/lon cols can be discretized to "air traffic corridors"&#x000A;    latbuckets = np.linspace(20.0, 50.0, nbuckets).tolist()&#x000A;    lonbuckets = np.linspace(-120.0, -70.0, nbuckets).tolist()&#x000A;    disc = {}&#x000A;    disc.update({&#x000A;       'd_{}'.format(key) : \&#x000A;           tflayers.bucketized_column(real[key], latbuckets) \&#x000A;           for key in ['dep_lat', 'arr_lat']&#x000A;    })&#x000A;    disc.update({&#x000A;       'd_{}'.format(key) : \&#x000A;           tflayers.bucketized_column(real[key], lonbuckets) \&#x000A;           for key in ['dep_lon', 'arr_lon']&#x000A;    })&#x000A;    # cross columns that make sense in combination&#x000A;    sparse['dep_loc'] = tflayers.crossed_column( \&#x000A;           [disc['d_dep_lat'], disc['d_dep_lon']],\&#x000A;           nbuckets*nbuckets)&#x000A;    sparse['arr_loc'] = tflayers.crossed_column( \&#x000A;           [disc['d_arr_lat'], disc['d_arr_lon']],\&#x000A;           nbuckets*nbuckets)&#x000A;    sparse['dep_arr'] = tflayers.crossed_column( \&#x000A;           [sparse['dep_loc'], sparse['arr_loc']],\&#x000A;           nbuckets ** 4)&#x000A;    sparse['ori_dest'] = tflayers.crossed_column( \&#x000A;           [sparse['origin'], sparse['dest']], \&#x000A;           hash_bucket_size=1000)&#x000A;&#x000A;    # create embeddings of all the sparse columns&#x000A;    embed = {&#x000A;       colname : create_embed(col) \&#x000A;          for colname, col in sparse.items()&#x000A;    }&#x000A;    real.update(embed)&#x000A;&#x000A;    #lin_opt=tf.train.FtrlOptimizer(learning_rate=learning_rate)&#x000A;    #l_rate=learning_rate*0.25&#x000A;    #dnn_opt=tf.train.AdagradOptimizer(learning_rate=l_rate)&#x000A;    estimator = tflearn.DNNLinearCombinedClassifier(&#x000A;         model_dir=output_dir,&#x000A;         linear_feature_columns=sparse.values(),&#x000A;         dnn_feature_columns=real.values(),&#x000A;         dnn_hidden_units=parse_hidden_units(hidden_units))&#x000A;         #linear_optimizer=lin_opt,&#x000A;         #dnn_optimizer=dnn_opt)&#x000A;    estimator = tf.contrib.estimator.add_metrics(estimator, my_rmse)&#x000A;    return estimator&#x000A;</code></pre>
+<p>ファイルの末尾にある <code>run_experiment</code> 関数まで、ページを下にスクロールします。線形分類関数の代わりにディープ ニューラル ネットワーク推定関数を呼び出すように、テストを再構成する必要があります。</p>
+<p><code>estimator = dnn_model(output_dir)</code> の行を、次のように置き換えます。</p>
+<pre><code>  #estimator = linear_model(output_dir)&#x000A;  # estimator = dnn_model(output_dir)&#x000A;  estimator =  wide_and_deep_model(output_dir, 5, '64,32', 0.01)&#x000A;</code></pre>
+<p><strong>CTRL</strong>+<strong>X</strong> を押してから <strong>Y</strong> を押します。<strong>Enter</strong> を押して <code>model.py</code> を保存します。</p>
+<p>このモデルを実行する新しい場所を指すように、OUTPUT 環境変数を変更します。</p>
+<pre><code>export OUTPUT_DIR=gs://${BUCKET}/flights/chapter9/output2&#x000A;</code></pre>
+<p>ジョブを識別できるように新しいジョブ名を作成し、作業ディレクトリに移動します。</p>
+<pre><code>export JOBNAME=wide_and_deep_flights_$(date -u +%y%m%d_%H%M%S)&#x000A;</code></pre>
+<p>新しいモデルの Cloud-ML タスクを送信します。</p>
+<pre><code>gcloud ml-engine jobs submit training $JOBNAME \&#x000A;  --module-name=trainer.task \&#x000A;  --package-path=$(pwd)/flights/trainer \&#x000A;  --job-dir=$OUTPUT_DIR \&#x000A;  --staging-bucket=gs://$BUCKET \&#x000A;  --region=$REGION \&#x000A;  --scale-tier=STANDARD_1 \&#x000A;  --runtime-version=1.10 \&#x000A;  -- \&#x000A;  --output_dir=$OUTPUT_DIR \&#x000A;  --traindata $DATA_DIR/train* --evaldata $DATA_DIR/test*&#x000A;</code></pre>
+<p>ここで GCP Console ブラウザに戻り、再度 [<strong>ML Engine</strong>] &gt; [<strong>ジョブ</strong>] を開きます。</p>
+<p>[<strong>更新</strong>] をクリックします。</p>
+<p><strong>wide_and_deep_flights-YYMMDD-HHMMSS</strong> という名前のジョブをクリックして開きます。</p>
+<p>トレーニング プロセスの間、ジョブをモニタリングします。これには数分かかります。最新の情報が表示されるように、必ずブラウザを更新します。</p>
+<p>ジョブが完了したら、[<strong>ログを表示</strong>] をクリックします。</p>
+<p>多数のイベントが表示されますが、ジョブ実行の終わり頃に「<code>Saving dict for global step ...</code>」で始まる説明が付いたイベントが表示されます。</p>
+<p>そのイベントをクリックして詳細を開きます。</p>
+<p>次に示すように、分析指標の全リストが表示されます。</p>
+<p><img alt="d075b0f8bda9cedf.png" src="https://cdn.qwiklabs.com/0grFJSsk2%2BorRmnmrJKfW7ZK%2FOwEOu8WSJ3kLQTGfDQ%3D"></p>
+<h2 id="step8">学習率の変更</h2>
+<p>SSH セッションに戻り、次のコマンドを入力して <code>model.py</code> 関数を再度編集します。</p>
+<pre><code>nano -w ~/tensorflow/flights/trainer/model.py&#x000A;</code></pre>
+<p><code>def wide_and_deep_model</code> 定義が見つかるまでページを下にスクロールします。ここで、線形オプティマイザーの学習率や dnn オプティマイザーの学習率を構成する行のコメントを削除します。コメントを削除する必要がある箇所は推定定義の直前に 3 行あり、また推定定義内にもコメントを削除する必要がある箇所が 2 行あります。</p>
+<p><img alt="91cf511ded2d7a61.png" src="https://cdn.qwiklabs.com/ccN%2FWyuxpHWwr7qXrJj%2B0Scf7j9LOQ3xwHnG2xIt7oo%3D"></p>
+<p><code>dnn_hidden_units parameter</code> を定義する行の最後の閉じかっこを削除し、「<code>,</code>」に置き換えます。</p>
+<p><img alt="95c81de943c6ae1c.png" src="https://cdn.qwiklabs.com/Xgczci2eaL%2B0GqP5S2vdgAA50P4ueef8PmetNTONMq8%3D"></p>
+<p>すると、コードのこの部分は次のようになります。</p>
+<p><img alt="61e9f0e48977d7ef.png" src="https://cdn.qwiklabs.com/uya8EEmmVd%2FakVKH5XdLnTnxCQQJKiTBmqAGWyAl6Gw%3D"></p>
+<p>これにより、オプティマイザーは <code>FtrlOptimizer</code> のデフォルトの学習率である 0.2 または 1 / sqrt(N) から変更されます。ここで N は線形列の数です。この場合、オプティマイザーの学習率は 0.2 です。DNN セクションで使用される <code>AdagradOptimizer</code> では、分類はデフォルトの学習率である 0.05 を使用します。これで、<code>FtrlOptimizer</code> と <code>AdagradOptimizer</code> の学習率が、それぞれ 0.01 と 0.0025 になるようにコードが変更されました。</p>
+<p><strong>CTRL</strong>+<strong>X</strong> を押してから <strong>Y</strong> を押します。<strong>Enter</strong> を押して <code>model.py</code> を保存します。</p>
+<p>このモデルを実行する新しい場所を指すように、OUTPUT 環境変数を変更します。</p>
+<pre><code>export OUTPUT_DIR=gs://${BUCKET}/flights/chapter9/output3&#x000A;</code></pre>
+<p>ジョブを識別できるように新しいジョブ名を作成し、作業ディレクトリに移動します。</p>
+<pre><code>export JOBNAME=learn_rate_flights_$(date -u +%y%m%d_%H%M%S)&#x000A;</code></pre>
+<p>新しいモデルの Cloud-ML タスクを送信します。</p>
+<pre><code>gcloud ml-engine jobs submit training $JOBNAME \&#x000A;  --module-name=trainer.task \&#x000A;  --package-path=$(pwd)/flights/trainer \&#x000A;  --job-dir=$OUTPUT_DIR \&#x000A;  --staging-bucket=gs://$BUCKET \&#x000A;  --region=$REGION \&#x000A;  --scale-tier=STANDARD_1 \&#x000A;  --runtime-version=1.10 \&#x000A;  -- \&#x000A;  --output_dir=$OUTPUT_DIR \&#x000A;  --traindata $DATA_DIR/train* --evaldata $DATA_DIR/test*&#x000A;</code></pre>
+<p>ここで GCP Console ブラウザに戻り、再度 [<strong>ML Engine</strong>] &gt; [<strong>ジョブ</strong>] を開きます。</p>
+<p>[<strong>更新</strong>] をクリックします。</p>
+<p><strong>learn_rate_flights-YYMMDD-HHMMSS</strong> という名前の新しいジョブをクリックして開きます。</p>
+<p>トレーニング プロセスの間、ジョブをモニタリングします。これには 5～10 分かかります。</p>
+<p>ジョブが完了したら、[<strong>ログを表示</strong>] をクリックします。</p>
+<p>多数のイベントが表示されますが、ジョブ実行の終わり頃に「<code>Saving dict for global step ...</code>」で始まる説明が付いたイベントが表示されます。</p>
+<p>そのイベントをクリックして詳細を開きます。</p>
+<p>次に示すように、分析指標の全リストが表示されます。</p>
+<p><img alt="b2cbcfbb7f5c3877.png" src="https://cdn.qwiklabs.com/9cG8D2QE%2FXn6fyYUa1ZivzVft0JC7333ICwXr20Zzw4%3D"></p>
+<h2 id="step9">モデルのデプロイと使用</h2>
+<p>トレーニング済みモデルが完成したので、これを使用して予測を実施できます。このコードの試験運用モデルの評価仕様では、モデルが ML Engine に読み込まれた後にモデルへの REST API 呼び出しを処理するサービス入力関数を定義しました。</p>
+<pre><code>MODEL_LOCATION=$(gsutil ls $OUTPUT_DIR/export/exporter | tail -1)&#x000A;</code></pre>
+<p>モデルと、そのモデルの初期バージョンを作成します。</p>
+<pre><code>gcloud ml-engine models create flights --regions us-central1&#x000A;gcloud ml-engine versions create v1 --model flights \&#x000A;                                    --origin ${MODEL_LOCATION} \&#x000A;                                    --runtime-version 1.10&#x000A;</code></pre>
+<p>完了するまで数分かかります。</p>
+<p>モデルに対してクエリを実行するために、Python をインタラクティブに使用します。</p>
+<p>まず、Google API クライアント Python モジュールをインストールします。</p>
+<pre><code>sudo pip install --upgrade google-api-python-client&#x000A;sudo pip install --upgrade oauth2client&#x000A;</code></pre>
+<p>Python のインタラクティブ シェルを開きます。</p>
+<pre><code>python&#x000A;</code></pre>
+<p>必要なモジュールをインポートします。</p>
+<pre><code>from googleapiclient import discovery&#x000A;from oauth2client.client import GoogleCredentials&#x000A;import os&#x000A;import json&#x000A;</code></pre>
+<p>API にアクセスできるように認証情報オブジェクトを作成します。</p>
+<pre><code>credentials = GoogleCredentials.get_application_default()&#x000A;</code></pre>
+<p>API 呼び出しを作成します。</p>
+<pre><code>api = discovery.build('ml', 'v1', credentials=credentials,&#x000A;      discoveryServiceUrl=&#x000A;     'https://storage.googleapis.com/cloud-ml/discovery/ml_v1_discovery.json')&#x000A;PROJECT = os.environ['PROJECT_ID']&#x000A;parent = 'projects/%s/models/%s/versions/%s' % (PROJECT, 'flights', 'v1')&#x000A;</code></pre>
+<p>サンプルのフライト詳細情報をいくつか使用して、リクエスト オブジェクトを作成します。</p>
+<pre><code>request_data = {'instances':&#x000A;  [&#x000A;      {&#x000A;        'dep_delay': 16.0,&#x000A;        'taxiout': 13.0,&#x000A;        'distance': 160.0,&#x000A;        'avg_dep_delay': 13.34,&#x000A;        'avg_arr_delay': 67.0,&#x000A;        'carrier': 'AS',&#x000A;        'dep_lat': 61.17,&#x000A;        'dep_lon': -150.00,&#x000A;        'arr_lat': 60.49,&#x000A;        'arr_lon': -145.48,&#x000A;        'origin': 'ANC',&#x000A;        'dest': 'CDV'&#x000A;      }&#x000A;  ]&#x000A;}&#x000A;</code></pre>
+<p>API に対してクエリを実行します。</p>
+<pre><code>response = api.projects().predict(body=request_data, name=parent).execute()&#x000A;print "response={0}".format(response)&#x000A;</code></pre>
+<p>これにより、次のようなレスポンスが得られます。</p>
+<pre><code class="language-bash prettyprint">response={&#x000A;u'predictions': [{&#x000A;u'probabilities': [0.45998525619506836, 0.5400148034095764], u'class_ids': [1],&#x000A;u'classes': [u'1'],&#x000A;u'logits': [0.1604020595550537],&#x000A;u'logistic': [0.5400148034095764]&#x000A;}]}&#x000A;</code></pre>
+<p>このモデルによるフライト遅延確率が 0.46 であることが示されています。このモデルは非常に限られたデモ データセットでトレーニングされているためこの予測は信頼できませんが、Google Cloud ML Engine を使用してアプリケーション内でトレーニング済みモデルを運用可能なファンクションにすることがどれほど簡単かということがわかります。</p>
